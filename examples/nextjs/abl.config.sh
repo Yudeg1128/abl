@@ -7,20 +7,19 @@ COMMAND=${1}
 case "$COMMAND" in
 
   start_dev)
-    mkdir -p tests/results
-    # kill any stale server on port 3000
+    mkdir -p logs
     kill $(lsof -ti:3000) 2>/dev/null
     rm -f src/.next/dev/lock
     sleep 1
     cd src
-    npm run dev > ../tests/results/dev.log 2>&1 &
-    echo $! > ../tests/results/dev.pid
+    npm run dev > ../logs/dev.log 2>&1 &
+    echo $! > ../logs/dev.pid
     cd ..
     sleep 5
     ;;
 
   stop_dev)
-    kill -- -$(cat tests/results/dev.pid) 2>/dev/null
+    kill -- -$(cat logs/dev.pid) 2>/dev/null
     pkill -f "next dev" 2>/dev/null
     kill $(lsof -ti:3000) 2>/dev/null
     rm -f src/.next/dev/lock
@@ -28,9 +27,9 @@ case "$COMMAND" in
 
   health_check)
     cd src
-    npm run lint > ../tests/results/lint.log 2>&1
+    npm run lint > ../logs/lint.log 2>&1
     lint_exit=$?
-    npx tsc --noEmit >> ../tests/results/lint.log 2>&1
+    npx tsc --noEmit >> ../logs/lint.log 2>&1
     tsc_exit=$?
     cd ..
     [ $lint_exit -eq 0 ] && [ $tsc_exit -eq 0 ]
