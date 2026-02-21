@@ -26,17 +26,35 @@ case "$COMMAND" in
     ;;
 
   health_check)
+    # All output captured to logs/health.log
+    # Return non-zero if any check fails
+    mkdir -p logs
+    > logs/health.log
+
     cd src
-    npm run lint > ../logs/lint.log 2>&1
+
+    echo "=== LINT ===" >> ../logs/health.log
+    npm run lint >> ../logs/health.log 2>&1
     lint_exit=$?
-    npx tsc --noEmit >> ../logs/lint.log 2>&1
+
+    echo "=== TYPECHECK ===" >> ../logs/health.log
+    npx tsc --noEmit >> ../logs/health.log 2>&1
     tsc_exit=$?
+
+    # Optional: add more checks here e.g. unit tests
+    # echo "=== UNIT TESTS ===" >> ../logs/health.log
+    # npm test -- --passWithNoTests >> ../logs/health.log 2>&1
+    # test_exit=$?
+
     cd ..
+
     [ $lint_exit -eq 0 ] && [ $tsc_exit -eq 0 ]
     ;;
 
   reset_state)
     # stateless — no-op
+    # for stateful projects e.g:
+    # npm run db:reset && npm run db:seed
     :
     ;;
 

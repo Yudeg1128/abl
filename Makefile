@@ -1,5 +1,5 @@
 PHASE          ?= 1
-BUILDER_MODEL  ?= gemini-2.5-flash
+BUILDER_MODEL  ?= gemini-2.5-pro
 VERIFIER_MODEL ?= gemini-2.5-flash
 SPECS          := $(wildcard specs/phase*.md)
 GEMINI         := $(HOME)/.nvm/versions/node/v22.21.0/bin/gemini
@@ -34,10 +34,12 @@ _build:
 	@cd src && git add -A && { git diff --cached --quiet || git commit -m "phase$(PHASE)/build/step-$(STEP)/pre-deterministic" --quiet; }
 	@echo "✓  Builder done"
 
-_build_with_failures:
+_build_with_context:
 	@echo "⚙  Builder running [phase $(PHASE) / step $(STEP)] with failure context..."
 	@$(MAKE) _map
-	@cat prompts/builder.md project.md project_map.txt specs/phase$(PHASE).md tests/failed_specs.md \
+	@cat prompts/builder.md project.md project_map.txt specs/phase$(PHASE).md \
+	  $(shell [ -f tests/failed_specs.md ] && echo tests/failed_specs.md) \
+	  $(shell [ -f logs/health.log ] && echo logs/health.log) \
 	| $(FIREJAIL) --whitelist=$(shell pwd)/src \
 	  $(GEMINI) -m $(BUILDER_MODEL) -y --output-format json -p "Execute your build instructions." \
 	  > logs/builder.log 2>&1
@@ -69,46 +71,53 @@ _verify:
 phase:
 	@[ -d src/.git ]   || git -C src init --quiet
 	@[ -d tests/.git ] || git -C tests init --quiet
-	@mkdir -p tests/results logs
+	@mkdir -p tests logs
 	@$(MAKE) _write_tests
-	@for i in 1 2 3; do \
+	@health_failed=0; \
+	for i in 1 2 3; do \
 		echo ""; \
 		echo "━━━ Iteration $$i / 3 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 		if [ $$i -eq 1 ]; then \
 			$(MAKE) _build STEP=$$i || exit 1; \
 		else \
-			$(MAKE) _build_with_failures STEP=$$i || exit 1; \
+			$(MAKE) _build_with_context STEP=$$i || exit 1; \
 		fi; \
 		echo "⚙  Health check..."; \
-		bash abl.config.sh health_check || { \
-			echo "✗  Health check failed — see logs/lint.log"; \
-			continue; }; \
-		echo "✓  Health check passed"; \
-		cd src && git add -A && \
-			{ git diff --cached --quiet || git commit -m "phase$(PHASE)/build/step-$$i/post-deterministic" --quiet; } && cd ..; \
-		echo "⚙  Starting dev server..."; \
-		bash abl.config.sh start_dev; \
-		echo "✓  Dev server ready"; \
-		bash abl.config.sh reset_state; \
-		if [ $$i -eq 1 ]; then \
-			$(MAKE) _verify_clean STEP=$$i; \
+		if bash abl.config.sh health_check; then \
+			echo "✓  Health check passed"; \
+			health_failed=0; \
+			rm -f logs/health.log; \
+			cd src && git add -A && \
+				{ git diff --cached --quiet || git commit -m "phase$(PHASE)/build/step-$$i/post-deterministic" --quiet; } && cd ..; \
+			echo "⚙  Starting dev server..."; \
+			bash abl.config.sh start_dev; \
+			echo "✓  Dev server ready"; \
+			bash abl.config.sh reset_state; \
+			if [ $$i -eq 1 ]; then \
+				$(MAKE) _verify_clean STEP=$$i; \
+			else \
+				$(MAKE) _verify STEP=$$i; \
+			fi; \
+			bash abl.config.sh stop_dev; \
+			echo "✓  Dev server stopped"; \
+			if [ ! -f tests/failed_specs.md ] || ! grep -q "SPEC:" tests/failed_specs.md; then \
+				echo ""; \
+				echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+				echo "✓  Phase $(PHASE) passed"; \
+				echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+				exit 0; \
+			fi; \
+			echo "✗  Contracts failed — see tests/failed_specs.md"; \
 		else \
-			$(MAKE) _verify STEP=$$i; \
+			echo "✗  Health check failed — see logs/health.log"; \
+			health_failed=1; \
 		fi; \
-		bash abl.config.sh stop_dev; \
-		echo "✓  Dev server stopped"; \
-		if [ ! -f tests/failed_specs.md ] || ! grep -q "SPEC:" tests/failed_specs.md; then \
-			echo ""; \
-			echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-			echo "✓  Phase $(PHASE) passed"; \
-			echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-			exit 0; \
-		fi; \
-		echo "✗  Contracts failed — see tests/failed_specs.md"; \
 	done; \
-	bash abl.config.sh stop_dev; \
+	bash abl.config.sh stop_dev 2>/dev/null; \
 	echo ""; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	echo "✗  STUCK after 3 iterations — see tests/failed_specs.md"; \
+	echo "✗  STUCK after 3 iterations"; \
+	[ -f tests/failed_specs.md ] && echo "    → see tests/failed_specs.md"; \
+	[ $$health_failed -eq 1 ] && echo "    → see logs/health.log"; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
 	exit 1

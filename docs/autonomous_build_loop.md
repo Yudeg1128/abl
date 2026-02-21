@@ -113,11 +113,16 @@ project/
 │   └── [all application code]
 ├── tests/
 │   ├── .git/
-│   ├── failed_specs.md       # Written by Verifier on failure, read by Builder
-│   └── results/              # logs: dev.log, dev.pid, lint.log
+│   └── failed_specs.md       # Written by Verifier on failure, deleted on pass
 ├── specs/
 │   ├── phase1.md
 │   └── phaseN.md
+├── logs/                     # Runtime artifacts — gitignored
+│   ├── builder.log           # Full Gemini CLI JSON output from Builder
+│   ├── verifier.log          # Full Gemini CLI JSON output from Verifier
+│   ├── health.log            # Deterministic health check output
+│   ├── dev.log               # Dev server stdout/stderr
+│   └── dev.pid               # Dev server process ID
 ├── project.md                # Human-written project description
 ├── prompts/
 │   ├── builder.md
@@ -132,20 +137,24 @@ project/
 
 ```
 ONCE at phase start:
-    _map_src → project_map.txt (src tree only)
+    _map → project_map.txt (src tree only)
     Verifier writes initial test suite in firejail (tests/ only)
     git commit tests: "phaseN/verify/suite-written"
 
 loop (max 3 iterations):
-    1. _map_src → project_map.txt
+    1. _map → project_map.txt
        Builder runs in firejail (src/ only)
-       Builder reads specs + project_map.txt + failed_specs.md (if any)
+       Iteration 1: reads specs + project_map.txt
+       Iteration 2+: reads specs + project_map.txt + failed_specs.md + health.log
        Builder writes code
        git commit src: "phaseN/build/step-X/pre-deterministic"
 
-    2. Deterministic health check (lint + typecheck)
-       → FAIL: raw logs fed to Builder → back to step 1
-       → PASS: git commit src: "phaseN/build/step-X/post-deterministic"
+    2. Deterministic health check (abl.config.sh health_check)
+       All output captured to logs/health.log
+       Suite is project-defined — lint, typecheck, unit tests, etc.
+       → FAIL: health.log retained, fed to Builder next iteration → back to step 1
+       → PASS: health.log cleared
+               git commit src: "phaseN/build/step-X/post-deterministic"
 
     3. Dev server starts fresh (abl.config.sh start_dev)
        State reset (abl.config.sh reset_state)
@@ -154,11 +163,10 @@ loop (max 3 iterations):
        → tests/failed_specs.md absent or empty: ✓ PASS — kill server, surface to human
        → tests/failed_specs.md has SPEC entries: FAIL
          git commit tests: "phaseN/verify/step-X/results"
-         kill server
-         → back to step 1
+         kill server → back to step 1
 
     4. After 3 iterations: STUCK
-       Surface to human: failed_specs.md + lint.log
+       Surface to human: failed_specs.md and/or health.log
 ```
 
 ---
@@ -179,26 +187,53 @@ COMMAND=${1}
 case "$COMMAND" in
 
   start_dev)
-    mkdir -p tests/results
+    mkdir -p logs
+    kill $(lsof -ti:3000) 2>/dev/null
+    rm -f src/.next/dev/lock
+    sleep 1
     cd src
-    npm run dev > ../tests/results/dev.log 2>&1 &
-    echo $! > ../tests/results/dev.pid
+    npm run dev > ../logs/dev.log 2>&1 &
+    echo $! > ../logs/dev.pid
     cd ..
     sleep 5
     ;;
 
+  stop_dev)
+    kill -- -$(cat logs/dev.pid) 2>/dev/null
+    pkill -f "next dev" 2>/dev/null
+    kill $(lsof -ti:3000) 2>/dev/null
+    rm -f src/.next/dev/lock
+    ;;
+
   health_check)
+    # Project-defined deterministic checks — all output to logs/health.log
+    # Add or remove checks for your stack. Return non-zero if any fail.
+    mkdir -p logs
+    > logs/health.log
+
     cd src
-    npm run lint > ../tests/results/lint.log 2>&1
+
+    echo "=== LINT ===" >> ../logs/health.log
+    npm run lint >> ../logs/health.log 2>&1
     lint_exit=$?
-    npx tsc --noEmit >> ../tests/results/lint.log 2>&1
+
+    echo "=== TYPECHECK ===" >> ../logs/health.log
+    npx tsc --noEmit >> ../logs/health.log 2>&1
     tsc_exit=$?
+
+    # Add more checks as needed:
+    # echo "=== UNIT TESTS ===" >> ../logs/health.log
+    # npm test -- --passWithNoTests >> ../logs/health.log 2>&1
+    # test_exit=$?
+
     cd ..
     [ $lint_exit -eq 0 ] && [ $tsc_exit -eq 0 ]
     ;;
 
   reset_state)
     # stateless — no-op
+    # for stateful projects e.g:
+    # npm run db:reset && npm run db:seed
     :
     ;;
 
@@ -206,95 +241,26 @@ case "$COMMAND" in
     cat src/package.json
     ;;
 
+  *)
+    echo "Unknown command: $COMMAND"
+    exit 1
+    ;;
+
 esac
 ```
 
 ### Makefile — universal
 
-```makefile
-PHASE          ?= 1
-BUILDER_MODEL  ?= gemini-2.5-pro
-VERIFIER_MODEL ?= gemini-2.5-flash
-SPECS          := $(wildcard specs/phase*.md)
+See the `Makefile` in the repo root. Key design points:
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-
-_map:
-	tree src/ -I 'node_modules|.git' --dirsfirst > project_map.txt
-	echo "---" >> project_map.txt
-	bash abl.config.sh map_deps >> project_map.txt
-
-# ── Roles ──────────────────────────────────────────────────────────────────
-
-_write_tests:
-	$(MAKE) _map
-	cat prompts/verifier.md project.md project_map.txt $(SPECS) \
-	| firejail --whitelist=$(PWD)/tests \
-	  gemini -m $(VERIFIER_MODEL) -y -p "Write the initial test suite for this phase."
-	cd tests && git add -A && { git diff --cached --quiet || git commit -m "phase$(PHASE)/verify/suite-written"; }
-
-_build:
-	$(MAKE) _map
-	cat prompts/builder.md project.md project_map.txt specs/phase$(PHASE).md \
-	| firejail --whitelist=$(PWD)/src \
-	  gemini -m $(BUILDER_MODEL) -y -p "Execute your build instructions."
-	cd src && git add -A && { git diff --cached --quiet || git commit -m "phase$(PHASE)/build/step-$(STEP)/pre-deterministic"; }
-
-_build_with_failures:
-	$(MAKE) _map
-	cat prompts/builder.md project.md project_map.txt specs/phase$(PHASE).md tests/failed_specs.md \
-	| firejail --whitelist=$(PWD)/src \
-	  gemini -m $(BUILDER_MODEL) -y -p "Execute your build instructions."
-	cd src && git add -A && { git diff --cached --quiet || git commit -m "phase$(PHASE)/build/step-$(STEP)/pre-deterministic"; }
-
-_verify_clean:
-	$(MAKE) _map
-	cat prompts/verifier.md project.md project_map.txt $(SPECS) \
-	| firejail --whitelist=$(PWD)/tests \
-	  gemini -m $(VERIFIER_MODEL) -y -p "Run the test suite. Write failed_specs.md on failure."
-	cd tests && git add -A && { git diff --cached --quiet || git commit -m "phase$(PHASE)/verify/step-$(STEP)/results"; }
-
-_verify:
-	$(MAKE) _map
-	cat prompts/verifier.md project.md project_map.txt $(SPECS) tests/failed_specs.md \
-	| firejail --whitelist=$(PWD)/tests \
-	  gemini -m $(VERIFIER_MODEL) -y -p "Run the test suite. Write failed_specs.md on failure."
-	cd tests && git add -A && { git diff --cached --quiet || git commit -m "phase$(PHASE)/verify/step-$(STEP)/results"; }
-
-# ── Main loop ──────────────────────────────────────────────────────────────
-
-phase:
-	[ -d src/.git ]   || git -C src init
-	[ -d tests/.git ] || git -C tests init
-	mkdir -p tests/results
-	$(MAKE) _write_tests
-	@for i in 1 2 3; do \
-		echo "--- Iteration $$i ---"; \
-		if [ $$i -eq 1 ]; then \
-			$(MAKE) _build STEP=$$i || exit 1; \
-		else \
-			$(MAKE) _build_with_failures STEP=$$i || exit 1; \
-		fi; \
-		bash abl.config.sh health_check || { \
-			echo "✗ Code health failed — see tests/results/lint.log"; \
-			continue; }; \
-		cd src && git add -A && \
-			{ git diff --cached --quiet || git commit -m "phase$(PHASE)/build/step-$$i/post-deterministic"; } && cd ..; \
-		bash abl.config.sh start_dev; \
-		bash abl.config.sh reset_state; \
-		if [ $$i -eq 1 ]; then \
-			$(MAKE) _verify_clean STEP=$$i; \
-		else \
-			$(MAKE) _verify STEP=$$i; \
-		fi; \
-		kill $$(cat tests/results/dev.pid) 2>/dev/null; \
-		if [ ! -f tests/failed_specs.md ] || ! grep -q "SPEC:" tests/failed_specs.md; then \
-			echo "✓ Phase $(PHASE) passed"; \
-			exit 0; \
-		fi; \
-	done; \
-	echo "✗ STUCK — see tests/failed_specs.md"; exit 1
-```
+- `_build` — first iteration, clean context only
+- `_build_with_context` — subsequent iterations, pipes both `tests/failed_specs.md` and `logs/health.log` if present
+- `_verify_clean` — first verify run, no prior failure context
+- `_verify` — subsequent verify runs, includes `failed_specs.md`
+- `health.log` is cleared on pass, retained on fail so it reaches the Builder next iteration
+- All Gemini output redirected to `logs/` with `--output-format json` for clean console and structured debug logs
+- Pass/fail determined by `tests/failed_specs.md` presence — not LLM exit code
+- STUCK message tells human exactly which log to read
 
 Model selection is per invocation:
 
