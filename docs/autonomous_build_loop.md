@@ -1,5 +1,5 @@
 # Autonomous Build Loop (ABL)
-## Concept Formalization v0.5
+## Concept Formalization v0.6
 
 ---
 
@@ -27,13 +27,13 @@ The human touches the system exactly twice per phase: spec input and audit outpu
 
 ## Roles
 
-**Builder** — reads all cumulative contracts + current codebase + deterministic error logs when applicable. Writes code only. Never sees Verifier tests, test results, or anything outside `src/`. Does not run lint, build, or any health commands — those are the Makefile's job. When done writing code, stops.
+**Builder** — reads the phase index, pulls the current phase spec, reads the codebase. Implements contracts exactly. Never runs health checks, tests, or any shell commands beyond reading and writing code. When done, stops.
 
-**Deterministic Code Health Step** — not an LLM. Fixed shell checks run by the Makefile after every build: lint, type check. Fails fast, feeds raw error output directly to the Builder, blocks progression to the Verifier until all pass cleanly. Defined in `abl.config.sh`.
+**Deterministic Health Step** — not an LLM. Project-defined shell checks (lint, typecheck, unit tests, etc.) run by the Makefile after every build. All output captured to `logs/health.log`. Fails fast, feeds errors directly to the Builder on next attempt. The inner loop retries up to 10 times before declaring STUCK.
 
-**Verifier** — reads all cumulative specs, never sees code. Writes an initial test suite once at phase start. Runs and refines the suite each iteration — expanding, refocusing, or correcting tests as needed — but always anchored to contracts. Never rewrites the suite from scratch mid-loop. Communicates failures via `failed_specs.md` only. The dev server is already running on localhost:3000 — the Verifier never starts it.
+**Verifier** — reads the phase index, pulls all relevant specs, tests the live system. Writes tests, runs them, reports failures via `failed_specs.md`. Never reads source code. Never starts the dev server — it is already running. When done, stops.
 
-**Makefile** — runs the loop, manages git, starts/stops the dev server, enforces filesystem boundaries via firejail, surfaces result to human. No intelligence. No interpretation.
+**Makefile** — runs the loop, manages git, starts/stops the dev server, enforces filesystem boundaries via firejail, surfaces results to human. No intelligence. No interpretation.
 
 There is no Rectifier. The Builder is the only entity that touches code.
 
@@ -43,18 +43,18 @@ There is no Rectifier. The Builder is the only entity that touches code.
 
 | Role | Reads | Never reads |
 |---|---|---|
-| Builder | All cumulative contracts + src/ codebase + deterministic error logs + failed_specs.md | tests/, specs/, prompts/verifier.md, Makefile, abl.config.sh |
-| Deterministic Step | Nothing — executes code directly | N/A |
-| Verifier | All cumulative specs + failed_specs.md + tests/ | src/, Makefile, abl.config.sh |
+| Builder | specs/ (via index) + SRC_DIR codebase + health.log + failed_specs.md | TESTS_DIR, Makefile, abl.config.sh, prompts/verifier.md |
+| Deterministic Step | Nothing — executes shell directly | N/A |
+| Verifier | specs/ (via index) + TESTS_DIR + failed_specs.md | SRC_DIR, Makefile, abl.config.sh |
 | Makefile | Exit codes + failed_specs.md presence | Everything else |
 
-Boundaries are enforced by **firejail** — each role runs in a sandboxed process that can only see its permitted directory. Even bash tricks like `cat ../Makefile` return nothing because the file literally does not exist in the sandbox. Prompts are a secondary soft layer, not the enforcement mechanism.
+Boundaries are enforced by **firejail**. Each role runs in a sandboxed process whitelisted only to its permitted directories. `specs/` is whitelisted for both roles so they can pull phase context on demand. Even bash tricks like `cat ../Makefile` return nothing — the file does not exist in the sandbox.
 
 ---
 
 ## Communication Channel: Builder ↔ Verifier
 
-The Verifier passes failures to the Builder via `tests/failed_specs.md`. Each entry contains the failed contract, the exact input used, and the observed system behavior. Written entirely in spec language — no test code, no test output, no implementation details.
+The Verifier passes failures to the Builder via `TESTS_DIR/failed_specs.md`. Each entry contains the failed contract, the exact input used, and the observed system behavior. Written entirely in spec language — no test code, no test output, no implementation details.
 
 Format:
 
@@ -68,7 +68,7 @@ INPUT: GET /dashboard headers: {Authorization: Bearer <token>}
 OBSERVED: redirect /login
 ```
 
-INPUT is mandatory — the Builder must know exactly what stimulus triggered the failure. Without INPUT, OBSERVED is ambiguous. Failure classification is intentionally omitted — SPEC + INPUT + OBSERVED is sufficient for a capable LLM to triage and act.
+INPUT is mandatory — the Builder must know exactly what stimulus triggered the failure.
 
 **Pass/fail signal:** The presence of `failed_specs.md` containing at least one `SPEC:` entry means failure. Absence or empty file means pass. The Makefile reads this deterministically — no LLM exit code is trusted for pass/fail.
 
@@ -76,29 +76,16 @@ INPUT is mandatory — the Builder must know exactly what stimulus triggered the
 
 ## Git Strategy
 
-Two separate git repositories — one for src, one for tests. The firejail boundary extends into version control. Neither role can traverse the other's git history.
+Two separate git repositories — one in SRC_DIR, one in TESTS_DIR. The firejail boundary extends into version control. Neither role can traverse the other's git history.
 
-```
-project/
-├── src/
-│   ├── .git/          # Builder's repo — code only
-│   └── [code files]
-├── tests/
-│   ├── .git/          # Verifier's repo — tests only
-│   └── [test files]
-```
-
-Each repo has its own linear commit history. No shared `.git`, no branch switching, no cross-contamination.
-
-**Commit points in src/.git:**
+**Commit points in SRC_DIR/.git:**
 ```
 phaseN/build/step-X/pre-deterministic    — raw Builder output
 phaseN/build/step-X/post-deterministic   — after health checks passed
 ```
 
-**Commit points in tests/.git:**
+**Commit points in TESTS_DIR/.git:**
 ```
-phaseN/verify/suite-written              — initial test suite written
 phaseN/verify/step-X/results            — after running suite
 ```
 
@@ -108,22 +95,24 @@ phaseN/verify/step-X/results            — after running suite
 
 ```
 project/
-├── src/
+├── [SRC_DIR]/                # configurable — "src", "app", "backend", etc.
 │   ├── .git/
 │   └── [all application code]
-├── tests/
+├── [TESTS_DIR]/              # configurable — "tests", "e2e", "spec", etc.
 │   ├── .git/
 │   └── failed_specs.md       # Written by Verifier on failure, deleted on pass
 ├── specs/
+│   ├── index.md              # Auto-generated phase index — one line per phase
 │   ├── phase1.md
 │   └── phaseN.md
 ├── logs/                     # Runtime artifacts — gitignored
 │   ├── builder.log           # Full Gemini CLI JSON output from Builder
 │   ├── verifier.log          # Full Gemini CLI JSON output from Verifier
-│   ├── health.log            # Deterministic health check output
+│   ├── health.log            # Deterministic health check output (retained on fail)
 │   ├── dev.log               # Dev server stdout/stderr
 │   └── dev.pid               # Dev server process ID
 ├── project.md                # Human-written project description
+├── project_map.txt           # Auto-generated before every LLM call
 ├── prompts/
 │   ├── builder.md
 │   └── verifier.md
@@ -133,58 +122,85 @@ project/
 
 ---
 
+## Phase Index
+
+`specs/index.md` is auto-generated by the Makefile. Each time `make phase PHASE=N` runs, the first line of `specs/phaseN.md` is appended to `specs/index.md`. This gives both Builder and Verifier a lightweight lookup table of all phases without having to pipe every spec file into context.
+
+Example `specs/index.md`:
+```
+# Phase 1: Hello API
+# Phase 2: Greeting Personalization
+# Phase 3: Health Check
+# Phase 4: Authentication
+```
+
+Both roles use this index to decide which spec files to pull and read. The Makefile never pipes spec files directly — roles pull on demand via firejail-whitelisted `specs/`.
+
+**Rule:** The first line of every phase spec file must be a heading in the format `# Phase N: Title`. This is the only enforced convention.
+
+---
+
 ## The Loop
 
 ```
-ONCE at phase start:
-    _map → project_map.txt (src tree only)
-    Verifier writes initial test suite in firejail (tests/ only)
-    git commit tests: "phaseN/verify/suite-written"
+make phase PHASE=N:
+    - Initialize SRC_DIR/.git and TESTS_DIR/.git if not present
+    - Append phase N heading to specs/index.md
 
-loop (max 3 iterations):
-    1. _map → project_map.txt
-       Builder runs in firejail (src/ only)
-       Iteration 1: reads specs + project_map.txt
-       Iteration 2+: reads specs + project_map.txt + failed_specs.md + health.log
-       Builder writes code
-       git commit src: "phaseN/build/step-X/pre-deterministic"
+outer loop (max 3 Verifier iterations):
 
-    2. Deterministic health check (abl.config.sh health_check)
-       All output captured to logs/health.log
-       Suite is project-defined — lint, typecheck, unit tests, etc.
-       → FAIL: health.log retained, fed to Builder next iteration → back to step 1
-       → PASS: health.log cleared
-               git commit src: "phaseN/build/step-X/post-deterministic"
+    inner loop (max 10 health attempts):
+        Builder runs in firejail (SRC_DIR + specs/)
+        Attempt 1 of vi=1: clean context
+        All other attempts: context includes failed_specs.md + health.log
+        Builder writes code
+        git commit SRC_DIR: "phaseN/build/step-X/pre-deterministic"
 
-    3. Dev server starts fresh (abl.config.sh start_dev)
-       State reset (abl.config.sh reset_state)
-       Verifier runs in firejail (tests/ only)
-       Verifier hits live server on localhost:3000
-       → tests/failed_specs.md absent or empty: ✓ PASS — kill server, surface to human
-       → tests/failed_specs.md has SPEC entries: FAIL
-         git commit tests: "phaseN/verify/step-X/results"
-         kill server → back to step 1
+        Deterministic health check (abl.config.sh health_check)
+        → FAIL: health.log retained, Builder retries (up to 10)
+        → PASS: health.log cleared
+                git commit SRC_DIR: "phaseN/build/step-X/post-deterministic"
+                break inner loop
 
-    4. After 3 iterations: STUCK
-       Surface to human: failed_specs.md and/or health.log
+    inner loop exhausted (10 fails): STUCK (health) → surface logs/health.log
+
+    Dev server starts fresh (abl.config.sh start_dev)
+    State reset (abl.config.sh reset_state)
+
+    Verifier runs in firejail (TESTS_DIR + specs/)
+    Verifier reads index, pulls relevant specs, runs all cumulative contracts
+    → TESTS_DIR/failed_specs.md absent or empty: ✓ PASS
+      kill server, surface to human
+    → TESTS_DIR/failed_specs.md has SPEC entries: FAIL
+      git commit TESTS_DIR: "phaseN/verify/step-X/results"
+      kill server → next outer iteration
+
+outer loop exhausted (3 Verifier fails): STUCK (contracts) → surface failed_specs.md
 ```
 
 ---
 
 ## Makefile and Project Configuration
 
-The Makefile is a **universal ABL runner** — it never changes between projects. All project-specific shell logic lives in `abl.config.sh`. Written once, reused across every project.
+The Makefile is a **universal ABL runner** — it never changes between projects. All project-specific logic lives in `abl.config.sh`.
 
 ### abl.config.sh — per project
 
 ```bash
 #!/bin/bash
-# Project-specific configuration for ABL.
 # Edit this file per project. Never edit the Makefile.
 
 COMMAND=${1}
 
 case "$COMMAND" in
+
+  src_dir)
+    echo "src"          # change to match your project structure
+    ;;
+
+  tests_dir)
+    echo "tests"        # change to match your project structure
+    ;;
 
   start_dev)
     mkdir -p logs
@@ -206,8 +222,6 @@ case "$COMMAND" in
     ;;
 
   health_check)
-    # Project-defined deterministic checks — all output to logs/health.log
-    # Add or remove checks for your stack. Return non-zero if any fail.
     mkdir -p logs
     > logs/health.log
 
@@ -221,7 +235,6 @@ case "$COMMAND" in
     npx tsc --noEmit >> ../logs/health.log 2>&1
     tsc_exit=$?
 
-    # Add more checks as needed:
     # echo "=== UNIT TESTS ===" >> ../logs/health.log
     # npm test -- --passWithNoTests >> ../logs/health.log 2>&1
     # test_exit=$?
@@ -231,43 +244,36 @@ case "$COMMAND" in
     ;;
 
   reset_state)
-    # stateless — no-op
-    # for stateful projects e.g:
-    # npm run db:reset && npm run db:seed
-    :
+    :   # npm run db:reset && npm run db:seed
     ;;
 
   map_deps)
     cat src/package.json
     ;;
 
-  *)
-    echo "Unknown command: $COMMAND"
-    exit 1
-    ;;
-
 esac
 ```
 
-### Makefile — universal
+### Makefile — key design points
 
-See the `Makefile` in the repo root. Key design points:
+- `SRC_DIR` and `TESTS_DIR` read from `abl.config.sh` at startup — Makefile is blind to actual paths
+- `specs/index.md` auto-appended on each `make phase` run
+- Both roles get `specs/` whitelisted in firejail — they pull phase files on demand
+- Builder runs first — no separate `_write_tests` step
+- Verifier writes tests and runs them in one session
+- `--no-print-directory` suppresses make recursion noise
+- Per-stage timers on every step using `$SECONDS`
+- `--output-format json` on all Gemini calls — clean console, structured debug logs in `logs/`
+- Health inner loop: 10 attempts before STUCK
+- Verifier outer loop: 3 iterations before STUCK
+- Two distinct STUCK messages with different escalation paths
 
-- `_build` — first iteration, clean context only
-- `_build_with_context` — subsequent iterations, pipes both `tests/failed_specs.md` and `logs/health.log` if present
-- `_verify_clean` — first verify run, no prior failure context
-- `_verify` — subsequent verify runs, includes `failed_specs.md`
-- `health.log` is cleared on pass, retained on fail so it reaches the Builder next iteration
-- All Gemini output redirected to `logs/` with `--output-format json` for clean console and structured debug logs
-- Pass/fail determined by `tests/failed_specs.md` presence — not LLM exit code
-- STUCK message tells human exactly which log to read
-
-Model selection is per invocation:
+Model selection:
 
 ```bash
-make phase PHASE=1                                                        # use defaults
-make phase PHASE=2 BUILDER_MODEL=gemini-2.0-flash                        # swap builder model
-make phase PHASE=3 VERIFIER_MODEL=gemini-2.5-pro                         # swap verifier model
+make phase PHASE=1
+make phase PHASE=2 BUILDER_MODEL=gemini-2.5-pro
+make phase PHASE=3 VERIFIER_MODEL=gemini-2.5-pro
 ```
 
 ---
@@ -276,28 +282,26 @@ make phase PHASE=3 VERIFIER_MODEL=gemini-2.5-pro                         # swap 
 
 ### What a Spec Is
 
-A spec is a behavioral contract. It defines a specific action and a specific expected result with no room for interpretation. The Verifier must be able to derive a test from it without any implementation knowledge. If a spec can be satisfied by two different behaviors, it is not tight enough.
+A spec is a behavioral contract. It defines a specific action and a specific expected result with no room for interpretation. The Verifier must be able to derive a test from it without any implementation knowledge.
 
 ### Spec Format
 
-Each spec is written in two parts: natural language context and quasi-code contracts.
+**Context** — natural language intent, architecture decisions, constraints.
 
-**Context** — explains intent, architectural decisions, technology constraints, and security considerations. Written in natural language. Gives Builder and Verifier the intelligence to act coherently beyond the literal contracts.
-
-**Contracts** — define exact behavioral expectations in quasi-code. One action, one result, no ambiguity.
+**Contracts** — exact quasi-code action → result pairs. One action, one result, no ambiguity.
 
 ```
 ACTION → EXPECTED RESULT
 ```
 
-**Supersession** — when a later phase changes an existing contract, it must explicitly declare it:
+**Supersession** — when a later phase changes an existing contract:
 
 ```
 SUPERSEDES: POST /auth/login → 200 {token}
 POST /auth/login {valid email, valid password} → 200 {token, refresh_token}
 ```
 
-**Stateful flow blocks** — for sequences where order matters, group contracts explicitly:
+**Stateful flow blocks:**
 
 ```
 FLOW: registration-to-dashboard
@@ -306,104 +310,30 @@ FLOW: registration-to-dashboard
   GET /dashboard (token) → 200
 ```
 
-The Verifier runs flow blocks in declared order. State from one step carries into the next.
-
-### Example Phase Spec
-
-```markdown
-## Phase 1: Authentication
-
-Users must be able to register and log in securely. Sessions
-are JWT-based. Passwords are hashed. Database is PostgreSQL.
-Failed attempts must not reveal whether an email exists.
-
-### Contracts
-POST /auth/register {email, password} → 201 {user_id}
-POST /auth/register {existing email} → 409
-POST /auth/login {valid email, valid password} → 200 {token}
-POST /auth/login {invalid password} → 401
-POST /auth/login {nonexistent email} → 401
-GET /dashboard (no token) → redirect /login
-GET /dashboard (valid token) → 200
-
-### Flows
-FLOW: registration-to-dashboard
-  POST /auth/register {email, password} → 201
-  POST /auth/login {email, password} → 200 {token}
-  GET /dashboard (token) → 200
-```
-
-### What a Phase Is
-
-A phase is a coherent functional grouping of specs that together describe a complete, auditable slice of behavior. The human audit should be able to experience a phase as a meaningful, demonstrable unit.
-
-A phase is too small if it cannot be demoed as a complete thing. A phase is too large if it contains more than one distinct functional concern. When in doubt, split.
-
 ### Spec Rules
 
-- Quasi-code is the contract layer — precise, unambiguous, directly testable
-- Natural language is the context layer — intent, constraints, architecture
-- Both are required. Neither is sufficient alone.
-- Specs are append-only across phases. Supersession is explicit via SUPERSEDES keyword
-- Removing a spec removes test coverage permanently. Never remove, only supersede
-- Stateful sequences must be declared as FLOW blocks with explicit ordering
-
----
-
-## Context Requirements
-
-### Builder Context (injected via pipe, then firejail to src/)
-
-```
-prompts/builder.md          # system prompt
-project.md                  # project description
-project_map.txt             # src/ tree only + package deps
-specs/phase*.md             # ALL cumulative specs
-tests/failed_specs.md       # if any failures from last iteration
-```
-
-### Verifier Context (injected via pipe, then firejail to tests/)
-
-```
-prompts/verifier.md         # system prompt
-project.md                  # project description
-project_map.txt             # src/ tree (topology only — no source reading)
-specs/phase*.md             # ALL cumulative specs
-tests/failed_specs.md       # if any failures from last iteration
-```
-
-### project.md
-
-Human-written once at project start. Describes what the project is, who it's for, technology stack, and high-level architectural decisions. Never auto-generated.
-
-### project_map.txt
-
-Auto-generated before every LLM call. Scoped to `src/` only — the full project root tree is never exposed to either role.
-
-```makefile
-_map:
-	tree src/ -I 'node_modules|.git' --dirsfirst > project_map.txt
-	echo "---" >> project_map.txt
-	bash abl.config.sh map_deps >> project_map.txt
-```
+- First line must be `# Phase N: Title` — this feeds the index
+- Specs are append-only across phases. Supersession is explicit via SUPERSEDES
+- Removing a spec removes test coverage permanently — never remove, only supersede
+- Stateful sequences go in FLOW blocks with explicit ordering
 
 ---
 
 ## Environment and Security
 
-**firejail** is the enforcement layer. Each role runs in a sandboxed process whitelisted to its permitted directory only. `cat ../Makefile` from inside the sandbox returns nothing — the file does not exist in the sandbox. No bash tricks can escape it.
+**firejail** is the enforcement layer. Builder sees only SRC_DIR and specs/. Verifier sees only TESTS_DIR and specs/. No bash tricks can escape the sandbox.
 
-**Dev server** starts fresh after every successful health check, before the Verifier runs. Killed after every Verifier run. Never running during build or health check steps. This prevents the `.next` cache permission issues that arise from locking `src/` while the server is running.
+**Dev server** starts fresh after every successful health check, killed after every Verifier run.
 
-**Secrets** live in `.env` at project root, listed in `.gitignore`. Never passed into LLM context. Always use sandbox credentials during the loop — never production keys.
+**Secrets** live in `.env` at project root, gitignored, never passed to LLMs.
 
-**Git as undo** — every meaningful state is committed to the appropriate repo. Any unintended change is one `git checkout` away from reversal.
+**Git as undo** — every meaningful state is committed. Any unintended change is one `git checkout` away.
 
 ---
 
 ## Human Audit
 
-The human audits the phase output as a complete experience. If problems are found, they are addressed by refining or extending specs — never by patching code directly. Refined specs either amend the current phase or define a new phase, then the loop reruns. All corrections become permanent spec knowledge.
+The human audits the phase output as a complete experience. Problems are addressed by refining specs — never by patching code directly. All corrections become permanent spec knowledge.
 
 ---
 

@@ -6,6 +6,18 @@ COMMAND=${1}
 
 case "$COMMAND" in
 
+  # ── Path configuration ────────────────────────────────────────────────────
+  # Return the source code directory (relative to project root)
+  src_dir)
+    echo "src"
+    ;;
+
+  # Return the tests directory (relative to project root)
+  tests_dir)
+    echo "tests"
+    ;;
+
+  # ── Dev server ────────────────────────────────────────────────────────────
   start_dev)
     mkdir -p logs
     kill $(lsof -ti:3000) 2>/dev/null
@@ -25,9 +37,10 @@ case "$COMMAND" in
     rm -f src/.next/dev/lock
     ;;
 
+  # ── Deterministic health checks ───────────────────────────────────────────
+  # All output captured to logs/health.log
+  # Return non-zero if any check fails
   health_check)
-    # All output captured to logs/health.log
-    # Return non-zero if any check fails
     mkdir -p logs
     > logs/health.log
 
@@ -41,23 +54,25 @@ case "$COMMAND" in
     npx tsc --noEmit >> ../logs/health.log 2>&1
     tsc_exit=$?
 
-    # Optional: add more checks here e.g. unit tests
+    # Add more checks as needed:
     # echo "=== UNIT TESTS ===" >> ../logs/health.log
     # npm test -- --passWithNoTests >> ../logs/health.log 2>&1
     # test_exit=$?
 
     cd ..
-
     [ $lint_exit -eq 0 ] && [ $tsc_exit -eq 0 ]
     ;;
 
+  # ── State reset ───────────────────────────────────────────────────────────
+  # Runs before every Verifier iteration
+  # No-op if stateless, otherwise reset DB/cache/queues
   reset_state)
-    # stateless — no-op
-    # for stateful projects e.g:
-    # npm run db:reset && npm run db:seed
     :
+    # npm run db:reset && npm run db:seed
     ;;
 
+  # ── Dependency map ────────────────────────────────────────────────────────
+  # Appended to project_map.txt before every LLM call
   map_deps)
     cat src/package.json
     ;;
