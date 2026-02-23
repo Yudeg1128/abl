@@ -1,117 +1,113 @@
 # ABL — Autonomous Build Loop
 
-A minimal, free-tier LLM development framework. You write specs. A Builder LLM writes code. A Verifier LLM tests it. A Makefile runs the loop. You audit the result.
-
-No paid API. No agent framework. No orchestration overhead. Just a Makefile, two prompts, and a shell config file.
-
-```
-Specs → [make phase] → Verified output → Human audit → next phase
-```
-
----
+A phase-based AI development framework. Write specs, run `abl phase N`, audit the output.
 
 ## How it works
 
-Each phase of your project is defined by a spec file. The loop runs automatically:
+```
+Specs → [abl phase N] → Verified output → Human audit → next phase
+```
 
-1. **Verifier** writes a test suite from your spec
-2. **Builder** implements the code
-3. Deterministic health checks run (lint, typecheck)
-4. **Verifier** hits the live server and checks every contract
-5. If anything fails, `failed_specs.md` is written and the Builder tries again
-6. After 3 iterations without passing → STUCK, surface to human
-7. On pass → human audits the running system
+The human touches the system exactly twice per phase: writing the spec and auditing the result. Everything in between — building, health checking, testing, retrying — is automatic.
 
-The human touches the system exactly twice per phase: spec input and audit output.
+ABL uses two isolated AI roles:
 
----
+- **Builder** — reads specs, writes code, fixes health errors. Runs in a Docker container with access only to your source directory.
+- **Verifier** — reads specs, tests the live system adversarially, reports contract failures. Runs in a separate Docker container with access only to your tests directory.
+
+Neither role can see the other's workspace.
 
 ## Requirements
 
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli) — free tier works
-- [firejail](https://firejail.wordpress.com/) — sandbox enforcement (`sudo apt install firejail`)
-- `make`, `tree`, `curl`, `git`
+- Node.js >= 18
+- Docker (running)
+- Gemini CLI (`npm install -g @google/generative-ai-cli`)
+- A `GEMINI_API_KEY` in your project's `.env`
 
----
-
-## Setup
-
-### 1. Clone this repo
+## Installation
 
 ```bash
-git clone https://github.com/yourusername/abl.git
-cd abl
+npm install -g abl
 ```
 
-### 2. Create your project structure
+## Quick Start
 
 ```bash
-mkdir -p myproject/src myproject/tests myproject/specs
-cd myproject
+cd your-project
+abl init
+# Edit .abl/project.md and .abl/specs/phase1.md
+abl phase 1
 ```
 
-### 3. Copy the framework files
+## Commands
 
-```bash
-cp ../Makefile .
-cp -r ../prompts .
-cp ../abl.config.sh .
+```
+abl init                    Initialize ABL in the current directory
+abl phase <N>               Run phase N
+abl phase <N> -b <model>    Override builder model
+abl phase <N> -v <model>    Override verifier model
+abl costs                   Show cumulative token usage
+abl --help                  Show help
 ```
 
-### 4. Configure for your project
+## Project Structure
 
-Edit `abl.config.sh` — this is the only file you touch per project:
+After `abl init`:
 
-```bash
-start_dev()     # how to start your dev server
-health_check()  # lint + typecheck commands  
-reset_state()   # DB seed, cache clear (no-op if stateless)
-map_deps()      # cat your package.json / requirements.txt
+```
+your-project/
+├── .abl/
+│   ├── abl.config.yaml     # Project configuration — edit this
+│   ├── project.md          # Project description — edit this
+│   ├── specs/
+│   │   ├── index.md        # Auto-generated phase index
+│   │   └── phase1.md       # Your specs — write these
+│   ├── tests/              # Verifier's workspace
+│   ├── lean_settings.json  # Gemini CLI settings (auto-generated)
+│   └── geminiignore.txt    # Gemini ignore rules (auto-generated)
+├── src/                    # Your application source (Builder's workspace)
+├── logs/
+│   └── tokens.csv          # Cumulative token usage
+└── .env                    # GEMINI_API_KEY=your_key (gitignored)
 ```
 
-### 5. Initialize your application
+## Configuration
 
-Put your app inside `src/`. For example, a Next.js project:
+`.abl/abl.config.yaml`:
 
-```bash
-cd src && npx create-next-app@latest . && cd ..
+```yaml
+directories:
+  src: ./src
+
+models:
+  builder: gemini-2.5-pro
+  verifier: gemini-2.5-flash
+
+commands:
+  health_check: npm run lint && npx tsc --noEmit
+  start_dev: npm run dev
+  reset_state: npm run db:seed   # remove if stateless
+  map_deps: cat package.json
+
+dev_server:
+  port: 3000
+  ready_endpoint: /api/health
+  timeout_ms: 15000
+
+loop:
+  max_health_attempts: 10
+  max_verifier_iterations: 5
 ```
 
-### 6. Write your first spec
+## Writing Specs
 
-Create `specs/phase1.md`:
+Specs are behavioral contracts. First line must be `# Phase N: Title`.
 
 ```markdown
-## Phase 1: Hello API
+# Phase 1: Authentication
 
-A single API route that returns a JSON greeting.
-
-### Contracts
-GET /api/hello → 200 {message: "hello world"}
-GET /api/nonexistent → 404
-```
-
-### 7. Run
-
-```bash
-make phase PHASE=1
-```
-
----
-
-## Spec format
-
-Specs are behavioral contracts in two parts:
-
-**Context** — natural language intent, architecture decisions, constraints.
-
-**Contracts** — exact quasi-code action → result pairs. No ambiguity.
-
-```markdown
-## Phase 2: Auth
-
-Users register and log in. JWT sessions. Passwords hashed.
-Failed attempts must not reveal whether an email exists.
+Users must be able to register and log in. Sessions are JWT-based.
+Passwords are hashed. Database is PostgreSQL.
 
 ### Contracts
 POST /auth/register {email, password} → 201 {user_id}
@@ -119,92 +115,61 @@ POST /auth/register {existing email} → 409
 POST /auth/login {valid credentials} → 200 {token}
 POST /auth/login {invalid password} → 401
 GET /dashboard (no token) → redirect /login
-
-### Flows
-FLOW: register-then-login
-  POST /auth/register {email, password} → 201
-  POST /auth/login {email, password} → 200 {token}
+GET /dashboard (valid token) → 200
 ```
 
-**Rules:**
-- Specs are append-only. Never delete, only supersede.
-- To change a contract in a later phase: `SUPERSEDES: GET /api/hello → 200`
-- Stateful sequences go in `FLOW` blocks — Verifier runs them in order
+## How the Loop Works
 
----
+```
+abl phase N
+  ↓
+DB reset
+  ↓
+Builder inner loop (max 10):
+  Builder writes code (Docker: src/ + specs/)
+  Health check (lint, typecheck, etc.)
+  → fail: feed health.log, retry
+  → pass: commit, break
+  ↓
+Dev server starts
+DB reset (fresh seed for Verifier)
+  ↓
+Verifier (Docker: tests/ + specs/)
+  Tests all cumulative contracts adversarially
+  Writes failed_specs.md on failure
+  → fail: commit, next outer iteration
+  → pass: done ✓
+  ↓
+Outer loop (max 5 Verifier iterations)
+  → exhausted: STUCK — see failed_specs.md
+```
 
-## Model selection
+## Resume
+
+`abl phase N` is idempotent. If a run was interrupted or got STUCK:
 
 ```bash
-make phase PHASE=1                                          # defaults
-make phase PHASE=1 BUILDER_MODEL=gemini-2.5-pro            # swap builder
-make phase PHASE=1 VERIFIER_MODEL=gemini-2.5-pro           # swap verifier
-make phase PHASE=1 BUILDER_MODEL=gemini-2.5-pro VERIFIER_MODEL=gemini-2.5-pro
+abl phase N   # automatically detects health.log / failed_specs.md and resumes
 ```
 
-Defaults are set at the top of the Makefile. Change them once there if you want persistent defaults.
+## Token Tracking
 
----
+Every Gemini call is logged to `logs/tokens.csv`. View a summary:
 
-## Project structure
-
-```
-myproject/
-├── src/                  # your application — Builder's territory
-│   └── .git/             # Builder's git repo
-├── tests/                # test scripts — Verifier's territory
-│   └── .git/             # Verifier's git repo
-├── specs/
-│   ├── phase1.md
-│   └── phase2.md
-├── prompts/
-│   ├── builder.md        # Builder system prompt
-│   └── verifier.md       # Verifier system prompt
-├── project.md            # one-time project description
-├── abl.config.sh         # your project-specific config
-└── Makefile              # universal runner — never edited
-```
-
----
-
-## Security model
-
-**firejail** enforces hard boundaries — not prompts, not chmod. The Builder runs in a sandbox that can only see `src/`. The Verifier runs in a sandbox that can only see `tests/`. Even bash tricks like `cat ../Makefile` return nothing. The file literally does not exist in the sandbox.
-
-Secrets live in `.env` at project root, gitignored, never passed to LLMs.
-
-Git is the undo button — every build and verify step is committed to its respective repo.
-
----
-
-## When things go wrong
-
-**STUCK** — after 3 iterations without passing, the loop surfaces `tests/failed_specs.md` to you. Read it. Either the spec is ambiguous (refine it) or the problem is architectural (new phase).
-
-**Rate limits** — Gemini free tier has quota limits. If you hit them, wait and retry. Use `gemini-2.5-flash` for both roles to conserve quota.
-
-**Stale server** — if `make phase` fails mid-run, clean up with:
 ```bash
-pkill -f "next dev"
-rm -f src/.next/dev/lock tests/failed_specs.md
-chmod -R 755 src/ tests/
+abl costs
 ```
 
----
+## Environment Variables
 
-## Examples
+| Variable | Description |
+|---|---|
+| `GEMINI_API_KEY` | Required. Put in `.env` at project root. |
+| `ABL_DEBUG` | Set to any value to print stack traces on errors. |
 
-See `examples/` for project-specific `abl.config.sh` templates:
-- `examples/nextjs/` — Next.js + TypeScript
-- more coming
+## v1 Reference
 
----
-
-## Contributing
-
-This is early. The architecture is stable but the rough edges are real — quota handling, complex stateful resets, large codebase navigation. If you use it and find something broken, open an issue or PR. The governing design doc is in `docs/autonomous_build_loop.md`.
-
----
+The original Makefile-based v1 is archived in `v1/` for reference. It requires Linux + firejail and is not actively maintained.
 
 ## License
 

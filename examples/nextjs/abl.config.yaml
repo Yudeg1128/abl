@@ -1,0 +1,22 @@
+directories:
+  src: ./src
+  tests: ./tests
+
+models:
+  builder: gemini-2.5-pro
+  verifier: gemini-2.5-flash
+
+commands:
+  health_check: npm run lint && npx tsc --noEmit
+  start_dev: npm run dev
+  reset_state: npm run db:seed
+  map_deps: cat package.json
+
+dev_server:
+  port: 3000
+  ready_endpoint: /api/health
+  timeout_ms: 15000
+
+loop:
+  max_health_attempts: 10
+  max_verifier_iterations: 5

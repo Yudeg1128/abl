@@ -1,0 +1,35 @@
+# Block everything by default
+/*
+
+# Allow source and test directories (set by firejail whitelist)
+!/src/
+!/tests/
+!/specs/
+
+# Block heavy junk inside allowed directories
+**/node_modules/
+**/package-lock.json
+**/.next/
+**/dist/
+**/build/
+**/.git/
+**/*.svg
+**/*.ico
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.webp
+**/*.tsbuildinfo
+**/*.map
+**/*.lock
+
+# Block ABL internals — piped manually by Makefile
+/prompts/
+/logs/
+/project_map.txt
+/project.md
+/Makefile
+/abl.config.sh
+/.env
+/.abl/

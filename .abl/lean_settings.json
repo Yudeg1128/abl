@@ -1,0 +1,38 @@
+{
+  "model": {
+    "name": "gemini-3-flash-preview",
+    "disableLoopDetection": true,
+    "maxSessionTurns": 80,
+    "compressionThreshold": 0.8
+  },
+  "modelConfigs": {
+    "customAliases": {
+      "chat-compression-default": { "modelConfig": { "model": "gemini-2.5-flash-lite" } },
+      "loop-detection-double-check": { "modelConfig": { "model": "gemini-2.5-flash-lite" } },
+      "summarizer-default": { "modelConfig": { "model": "gemini-2.5-flash-lite" } },
+      "summarizer-shell": { "modelConfig": { "model": "gemini-2.5-flash-lite" } },
+      "classifier": { "modelConfig": { "model": "gemini-2.5-flash-lite" } }
+    }
+  },
+  "context": {
+    "fileName": [],
+    "includeDirectoryTree": false,
+    "discoveryMaxDirs": 0,
+    "loadMemoryFromIncludeDirectories": false,
+    "fileFiltering": {
+      "respectGitIgnore": true,
+      "respectGeminiIgnore": true,
+      "customIgnoreFilePaths": ["./.abl/geminiignore.txt"]
+    }
+  },
+  "tools": {
+    "truncateToolOutputThreshold": 2500,
+    "disableLLMCorrection": true
+  },
+  "experimental": {
+    "toolOutputMasking": {
+      "enabled": true,
+      "toolProtectionThreshold": 5000
+    }
+  }
+}

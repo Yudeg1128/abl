@@ -1,0 +1,31 @@
+{
+  "name": "abl",
+  "version": "2.0.0-alpha.1",
+  "description": "Autonomous Build Loop — a phase-based AI development framework",
+  "main": "src/index.js",
+  "bin": {
+    "abl": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^12.0.0",
+    "js-yaml": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "ai",
+    "autonomous",
+    "build",
+    "loop",
+    "gemini",
+    "llm",
+    "framework",
+    "tdd"
+  ],
+  "license": "MIT"
+}
