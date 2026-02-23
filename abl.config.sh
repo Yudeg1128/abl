@@ -67,8 +67,9 @@ case "$COMMAND" in
   # Runs before every Verifier iteration
   # No-op if stateless, otherwise reset DB/cache/queues
   reset_state)
-    :
-    # npm run db:reset && npm run db:seed
+    cd src
+    npm run db:seed || { echo "  ✗  Seed failed — aborting"; cd ..; exit 1; }
+    cd ..
     ;;
 
   # ── Dependency map ────────────────────────────────────────────────────────
