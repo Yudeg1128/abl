@@ -1,0 +1,13 @@
+directories:
+  src: ./src
+
+models:
+  builder: gemini-2.5-flash
+  verifier: gemini-2.5-flash
+
+builder_commands:
+
+verifier_commands:
+
+loop:
+  max_verifier_iterations: 3

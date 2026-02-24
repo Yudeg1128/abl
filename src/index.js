@@ -5,9 +5,10 @@
 const { program } = require('commander');
 const { version } = require('../package.json');
 
-const phaseCommand = require('./commands/phase');
-const initCommand = require('./commands/init');
-const costsCommand = require('./commands/costs');
+const runCommand     = require('./commands/run');
+const phaseCommand   = require('./commands/phase');
+const initCommand    = require('./commands/init');
+const costsCommand   = require('./commands/costs');
 
 program
   .name('abl')
@@ -20,9 +21,17 @@ program
   .action(initCommand);
 
 program
+  .command('run')
+  .description('Run the next pending phase, or resume an interrupted one')
+  .option('-b, --builder-model <model>',  'Override builder model')
+  .option('-v, --verifier-model <model>', 'Override verifier model')
+  .option('--cwd <path>', 'Run as if from this directory')
+  .action(runCommand);
+
+program
   .command('phase <n>')
-  .description('Run a build phase')
-  .option('-b, --builder-model <model>', 'Override builder model')
+  .description('Run a specific phase by number')
+  .option('-b, --builder-model <model>',  'Override builder model')
   .option('-v, --verifier-model <model>', 'Override verifier model')
   .option('--cwd <path>', 'Run as if from this directory')
   .action(phaseCommand);

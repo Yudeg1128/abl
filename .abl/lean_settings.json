@@ -34,5 +34,23 @@
       "enabled": true,
       "toolProtectionThreshold": 5000
     }
+  },
+  "hooksConfig": {
+    "enabled": true,
+    "notifications": true
+  },
+  "hooks": {
+    "BeforeModel": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "rate-limit-throttle",
+            "type": "command",
+            "command": "sleep 5"
+          }
+        ]
+      }
+    ]
   }
 }

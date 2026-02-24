@@ -8,11 +8,11 @@ A phase-based AI development framework. Write specs, run `abl phase N`, audit th
 Specs → [abl phase N] → Verified output → Human audit → next phase
 ```
 
-The human touches the system exactly twice per phase: writing the spec and auditing the result. Everything in between — building, health checking, testing, retrying — is automatic.
+The human touches the system exactly twice per phase: writing the spec and auditing the result. Everything in between — building, testing, retrying — is automatic.
 
 ABL uses two isolated AI roles:
 
-- **Builder** — reads specs, writes code, fixes health errors. Runs in a Docker container with access only to your source directory.
+- **Builder** — reads specs, writes code, manages its own environment quality via `abl-cmd`. Runs in a Docker container with access only to your source directory.
 - **Verifier** — reads specs, tests the live system adversarially, reports contract failures. Runs in a separate Docker container with access only to your tests directory.
 
 Neither role can see the other's workspace.
@@ -59,15 +59,13 @@ your-project/
 ├── .abl/
 │   ├── abl.config.yaml     # Project configuration — edit this
 │   ├── project.md          # Project description — edit this
-│   ├── specs/
-│   │   ├── index.md        # Auto-generated phase index
-│   │   └── phase1.md       # Your specs — write these
+│   ├── specs/              # Your specs — write these
 │   ├── tests/              # Verifier's workspace
+│   ├── logs/
+│   │   └── tokens.csv      # Cumulative token usage
 │   ├── lean_settings.json  # Gemini CLI settings (auto-generated)
 │   └── geminiignore.txt    # Gemini ignore rules (auto-generated)
 ├── src/                    # Your application source (Builder's workspace)
-├── logs/
-│   └── tokens.csv          # Cumulative token usage
 └── .env                    # GEMINI_API_KEY=your_key (gitignored)
 ```
 
@@ -83,19 +81,14 @@ models:
   builder: gemini-2.5-pro
   verifier: gemini-2.5-flash
 
-commands:
+builder_commands:
   health_check: npm run lint && npx tsc --noEmit
   start_dev: npm run dev
-  reset_state: npm run db:seed   # remove if stateless
-  map_deps: cat package.json
 
-dev_server:
-  port: 3000
-  ready_endpoint: /api/health
-  timeout_ms: 15000
+verifier_commands:
+  seed: npm run db:seed
 
 loop:
-  max_health_attempts: 10
   max_verifier_iterations: 5
 ```
 
@@ -123,24 +116,20 @@ GET /dashboard (valid token) → 200
 ```
 abl phase N
   ↓
-DB reset
-  ↓
-Builder inner loop (max 10):
+Builder:
   Builder writes code (Docker: src/ + specs/)
-  Health check (lint, typecheck, etc.)
-  → fail: feed health.log, retry
-  → pass: commit, break
+  Builder runs its own health checks (abl-cmd)
+  Builder writes Run Report
   ↓
-Dev server starts
-DB reset (fresh seed for Verifier)
-  ↓
-Verifier (Docker: tests/ + specs/)
-  Tests all cumulative contracts adversarially
-  Writes failed_specs.md on failure
-  → fail: commit, next outer iteration
-  → pass: done ✓
+Verifier:
+  Verifier resets environment (abl-cmd)
+  Verifier tests all cumulative contracts adversarially
+  Verifier writes failed_specs.md on failure
+  Verifier writes Run Report
   ↓
 Outer loop (max 5 Verifier iterations)
+  → fail: commit, next outer iteration
+  → pass: done ✓
   → exhausted: STUCK — see failed_specs.md
 ```
 
@@ -149,12 +138,12 @@ Outer loop (max 5 Verifier iterations)
 `abl phase N` is idempotent. If a run was interrupted or got STUCK:
 
 ```bash
-abl phase N   # automatically detects health.log / failed_specs.md and resumes
+abl phase N   # automatically detects failed_specs.md and resumes
 ```
 
 ## Token Tracking
 
-Every Gemini call is logged to `logs/tokens.csv`. View a summary:
+Every Gemini call is logged to `.abl/logs/tokens.csv`. View a summary:
 
 ```bash
 abl costs

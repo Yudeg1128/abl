@@ -1,113 +1,55 @@
 'use strict';
 
-const fs   = require('fs');
+const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 
-const CONFIG_FILE = 'abl.config.yaml';
-const ABL_DIR     = '.abl';
-
 const DEFAULTS = {
-  models: {
-    builder:  'gemini-2.5-pro',
-    verifier: 'gemini-2.5-flash',
-  },
-  loop: {
-    max_health_attempts:      10,
-    max_verifier_iterations:  5,
-  },
-  dev_server: {
-    port:          3000,
-    ready_endpoint: '/api/health',
-    timeout_ms:    15000,
-  },
+  models: { builder: 'gemini-2.0-flash', verifier: 'gemini-2.0-flash' },
+  loop: { max_verifier_iterations: 5 }
 };
 
-/**
- * Walk up from startDir looking for .abl/
- * Returns the project root path or null.
- */
-function findProjectRoot(startDir) {
-  let dir = startDir;
-  while (true) {
-    if (fs.existsSync(path.join(dir, ABL_DIR, CONFIG_FILE))) {
-      return dir;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
+function loadConfig(cwd = process.cwd()) {
+  const ablDir = path.join(cwd, '.abl');
+  const configFile = path.join(ablDir, 'abl.config.yaml');
+  if (!fs.existsSync(configFile)) throw new Error('No ABL project found. Run "abl init".');
+  
+  const raw = yaml.load(fs.readFileSync(configFile, 'utf8')) || {};
+  const dirs = raw.directories || {};
 
-/**
- * Load, validate, and merge config with defaults.
- */
-function loadConfig(cwd) {
-  const root = findProjectRoot(cwd || process.cwd());
-  if (!root) {
-    throw new Error(
-      `No ABL project found. Run ${chalk_safe('abl init')} to set up a project.`
-    );
-  }
-
-  const configPath = path.join(root, ABL_DIR, CONFIG_FILE);
-  const raw = yaml.load(fs.readFileSync(configPath, 'utf8'));
-
-  validate(raw, configPath);
-
-  const config = mergeDefaults(raw);
-
-  // Resolve all paths to absolute
-  config.resolved = {
-    root,
-    ablDir:    path.join(root, ABL_DIR),
-    srcDir:    path.resolve(root, config.directories.src),
-    testsDir:  path.resolve(root, config.directories.tests  || path.join(ABL_DIR, 'tests')),
-    specsDir:  path.resolve(root, config.directories.specs  || path.join(ABL_DIR, 'specs')),
-    logsDir:   path.join(root, 'logs'),
-    tokensCsv: path.join(root, 'logs', 'tokens.csv'),
-  };
-
-  return config;
-}
-
-function validate(raw, configPath) {
-  if (!raw || typeof raw !== 'object') {
-    throw new Error(`Invalid config at ${configPath}`);
-  }
-  if (!raw.directories || !raw.directories.src) {
-    throw new Error(`config.directories.src is required in ${configPath}`);
-  }
-  if (!raw.commands || !raw.commands.health_check) {
-    throw new Error(`config.commands.health_check is required in ${configPath}`);
-  }
-  if (!raw.commands.start_dev) {
-    throw new Error(`config.commands.start_dev is required in ${configPath}`);
-  }
-}
-
-function mergeDefaults(raw) {
   return {
-    directories: raw.directories,
-    commands:    raw.commands,
-    models: {
-      ...DEFAULTS.models,
-      ...(raw.models || {}),
-    },
-    loop: {
-      ...DEFAULTS.loop,
-      ...(raw.loop || {}),
-    },
-    dev_server: {
-      ...DEFAULTS.dev_server,
-      ...(raw.dev_server || {}),
-    },
+    ...DEFAULTS,
+    ...raw,
+    models: raw.models ? { ...DEFAULTS.models, ...raw.models } : DEFAULTS.models,
+    loop: { ...DEFAULTS.loop, ...(raw.loop || {}) },
+    resolved: {
+      root: cwd,
+      ablDir,
+      specsDir: path.join(ablDir, 'specs'),
+      logsDir: path.join(ablDir, 'logs'),
+      promptsDir: path.join(ablDir, 'prompts'),
+      tokensCsv: path.join(ablDir, 'logs', 'tokens.csv'),
+      projectMap: path.join(ablDir, 'project_map.txt'),
+      stateFile: path.join(ablDir, 'state.json'),
+      srcDir: path.resolve(cwd, dirs.src || './src'),
+      testsDir: path.resolve(cwd, dirs.tests || './tests')
+    }
   };
 }
 
-// Safe reference for error message without circular dep on chalk
-function chalk_safe(str) {
-  return `\`${str}\``;
+function buildCommandContext(config, role) {
+  const commands = role === 'builder' ? config.builder_commands : config.verifier_commands;
+  const lines = [
+    'You have access to "abl-cmd" via the system shell.',
+    'Usage: abl-cmd <name> [args]',
+    '- abl-cmd get-spec <N> : Returns the content of phaseN.md spec'
+  ];
+  if (commands) {
+    Object.entries(commands).forEach(([name, def]) => {
+      lines.push(`- abl-cmd ${name} : ${def.description || name}`);
+    });
+  }
+  return lines.join('\n');
 }
 
-module.exports = { loadConfig, findProjectRoot };
+module.exports = { loadConfig, buildCommandContext };
