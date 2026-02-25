@@ -26,6 +26,7 @@ program
   .option('-b, --builder-model <model>',  'Override builder model')
   .option('-v, --verifier-model <model>', 'Override verifier model')
   .option('--cwd <path>', 'Run as if from this directory')
+  .option('-i, --interactive', 'Run Gemini CLI in interactive mode')
   .action(runCommand);
 
 program
@@ -34,6 +35,7 @@ program
   .option('-b, --builder-model <model>',  'Override builder model')
   .option('-v, --verifier-model <model>', 'Override verifier model')
   .option('--cwd <path>', 'Run as if from this directory')
+  .option('-i, --interactive', 'Run Gemini CLI in interactive mode')
   .action(phaseCommand);
 
 program

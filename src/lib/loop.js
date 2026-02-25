@@ -12,6 +12,7 @@ async function runPhase(config, phase, opts = {}) {
   const maxVi = config.loop.max_verifier_iterations;
   const bModel = opts.builderModel || config.models.builder;
   const vModel = opts.verifierModel || config.models.verifier;
+  const isInteractive = !!opts.interactive;
 
   let s = state.read(config);
   if (!s.current || s.current.phase !== phase) {
@@ -31,7 +32,11 @@ async function runPhase(config, phase, opts = {}) {
       state.updateProgress(config, { verifierIteration: vi, status: state.STATUS.BUILDING });
       log.info('Builder running...');
       try {
-        const bLog = await executor.runBuilder(config, phase, { iteration: vi, model: bModel });
+        const bLog = await executor.runBuilder(config, phase, { 
+          iteration: vi, 
+          model: bModel, 
+          interactive: isInteractive 
+        });
         tokens.extractTokens(config, bLog, 'builder', phase, vi);
         git.commitSrc(config, phase, vi, 'build');
         state.updateProgress(config, { builder_success: true });
@@ -51,7 +56,11 @@ async function runPhase(config, phase, opts = {}) {
       state.updateProgress(config, { status: state.STATUS.VERIFYING });
       log.info('Verifier running...');
       try {
-        const vLog = await executor.runVerifier(config, phase, { iteration: vi, model: vModel });
+        const vLog = await executor.runVerifier(config, phase, { 
+          iteration: vi, 
+          model: vModel, 
+          interactive: isInteractive // Add this
+        });
         tokens.extractTokens(config, vLog, 'verifier', phase, vi);
         git.commitTests(config, phase, vi);
         state.updateProgress(config, { verifier_success: true });

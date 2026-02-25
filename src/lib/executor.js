@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { buildPipedContext } = require('./context');
 const { generateMap } = require('./map');
+const os = require('os');
+const chalk = require('chalk');
 
 /**
  * Creates a temporary abl-cmd executable script inside the workspace
@@ -48,7 +50,7 @@ console.error('Unknown command: ' + cmd);
 process.exit(1);
 `;
 
-  const binDir = path.join(workspace, '.abl_bin');
+  const binDir = path.join(os.tmpdir(), `abl_bin_${role}_${Date.now()}`);
   if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
   
   const cmdPath = path.join(binDir, 'abl-cmd');
@@ -60,46 +62,60 @@ async function runRole(role, config, phase, opts) {
   const workspace = role === 'builder' ? config.resolved.srcDir : config.resolved.testsDir;
   const iteration = opts.iteration || 1;
   const logPath = path.join(config.resolved.logsDir, `${role}.log`);
+  const isInteractive = !!opts.interactive;
+  const verifierSystemPrompt = path.join(config.resolved.promptsDir, 'verifier_system.md');
 
-  // 1. Refresh Metadata
   generateMap(config);
-
-  // 2. Prepare Context
   const fullPrompt = buildPipedContext(config, role, phase, iteration);
-  
-  // 3. Setup local abl-cmd
   const binDir = setupAblCmd(config, role, workspace);
 
-  // 4. Execute Gemini CLI
   const env = {
     ...process.env,
     PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
     GEMINI_CLI_SYSTEM_SETTINGS_PATH: path.join(config.resolved.ablDir, 'lean_settings.json'),
-    GEMINI_API_KEY: process.env.GEMINI_API_KEY
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    ...(role === 'verifier' && fs.existsSync(verifierSystemPrompt) ? { GEMINI_SYSTEM_MD: verifierSystemPrompt } : {})
   };
 
   const model = opts.model || (role === 'builder' ? config.models.builder : config.models.verifier);
+  
   const args = [
     '-m', model,
-    '-y', // Auto-confirm tool usage
-    '--output-format', 'json',
-    '-p', fullPrompt,
+    '-y',
+    '--output-format', 'json'
   ];
 
-  const result = spawnSync('gemini', args, {
-    cwd: workspace,
-    env,
-    encoding: 'utf8',
-    maxBuffer: 10 * 1024 * 1024 // 10MB
-  });
+  if (isInteractive) {
+    args.push('-i', fullPrompt);
+    console.log(chalk.blue(`\n[Entering Interactive Mode for ${role}]`));
+    console.log(chalk.dim(`Type '/quit' to finish the ${role} turn and continue the loop.\n`));
+    
+    // In interactive mode, we must use 'inherit' to allow user input/output
+    spawnSync('gemini', args, {
+      cwd: workspace,
+      env,
+      stdio: 'inherit'
+    });
 
-  fs.writeFileSync(logPath, result.stdout + result.stderr);
+    return logPath; // Log will be empty in this mode
+  } else {
+    args.push('-p', fullPrompt);
+    const result = spawnSync('gemini', args, {
+      cwd: workspace,
+      env,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024
+    });
 
-  if (result.status !== 0) {
-    throw new Error(`${role} failed with exit code ${result.status}. See logs.`);
+    const output = (result.stdout || '') + (result.stderr || '');
+    fs.writeFileSync(logPath, output);
+
+    if (result.status !== 0) {
+      throw new Error(`${role} failed with exit code ${result.status}. See logs.`);
+    }
+
+    return logPath;
   }
-
-  return logPath;
 }
 
 module.exports = {

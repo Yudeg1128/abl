@@ -27,7 +27,11 @@
   },
   "tools": {
     "truncateToolOutputThreshold": 2500,
-    "disableLLMCorrection": true
+    "disableLLMCorrection": true,
+    "shell": {
+      "inactivityTimeout": 180
+    }
+
   },
   "experimental": {
     "toolOutputMasking": {

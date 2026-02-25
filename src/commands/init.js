@@ -48,7 +48,7 @@ async function initCommand() {
   ['abl.config.yaml', 'lean_settings.json', 'geminiignore.txt'].forEach(f => copyTemplate(f));
 
   // 3. Copy Role Prompts into .abl/prompts
-  ['builder.md', 'verifier.md'].forEach(f => {
+  ['builder.md', 'verifier.md', 'verifier_system.md'].forEach(f => {
     const srcPrompt = path.join(PACKAGE_ROOT, 'prompts', f);
     const destPrompt = path.join(promptsDir, f);
     if (fs.existsSync(srcPrompt)) {

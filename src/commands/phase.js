@@ -48,6 +48,7 @@ async function phaseCommand(n, opts) {
     await runPhase(config, phase, {
       builderModel:  config.models.builder,
       verifierModel: config.models.verifier,
+      interactive:   opts.interactive,
     });
   } catch (e) {
     console.error(chalk.red(`\nFatal: ${e.message}`));

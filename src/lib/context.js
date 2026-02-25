@@ -7,7 +7,8 @@ const { buildCommandContext } = require('./config');
 
 function buildPipedContext(config, role, phase, iteration) {
   const state = stateLib.read(config);
-  
+  const workspacePath = role === 'builder' ? config.resolved.srcDir : config.resolved.testsDir;
+
   const projectMd = fs.existsSync(path.join(config.resolved.ablDir, 'project.md'))
     ? fs.readFileSync(path.join(config.resolved.ablDir, 'project.md'), 'utf8')
     : '# Project\nNo description provided.';
@@ -26,6 +27,24 @@ function buildPipedContext(config, role, phase, iteration) {
     ? fs.readFileSync(currentSpecPath, 'utf8')
     : 'No spec found for this phase.';
 
+  // --- Failure Context for Builder ---
+  let failureContext = '';
+  if (role === 'builder') {
+    const failPath = path.join(config.resolved.testsDir, 'failed_specs.md');
+    if (fs.existsSync(failPath) && fs.readFileSync(failPath, 'utf8').trim().length > 0) {
+      failureContext = [
+        '# PREVIOUS ATTEMPT FAILED',
+        'Your previous implementation did not satisfy all contracts.',
+        'Address the following failures in your next implementation:',
+        '',
+        fs.readFileSync(failPath, 'utf8'),
+        ''
+      ].join('\n');
+    } else {
+      failureContext = '# INITIAL BUILD\nThis is a fresh iteration. No prior failures detected.';
+    }
+  }
+
   const historyLines = Object.entries(state.phase_titles)
     .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
     .map(([num, title]) => {
@@ -41,12 +60,12 @@ function buildPipedContext(config, role, phase, iteration) {
     '# Project Context',
     projectMd,
     '',
-    '# System Topology',
-    projectMap,
-    '',
     '# Session State',
     `Current Phase: ${phase} (${state.phase_titles[phase] || 'Unknown'})`,
     `Current Iteration: ${iteration}`,
+    `Workspace Root: ${workspacePath}`, // 2. FIXED: Explicit Spatial Awareness
+    '',
+    failureContext,
     '',
     '# Phase History',
     historyLines.join('\n'),

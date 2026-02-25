@@ -19,6 +19,7 @@ You are responsible for the technical integrity of the code you ship. A phase is
 2. **Health Checks:** If the "Available Commands" section includes a health check or validation command, you MUST run it via `abl-cmd` and ensure it passes before finishing your turn.
 3. **Significant Warnings:** The code must run without significant warnings. Do not leave "todo" comments or half-finished implementations.
 4. **Environment Management:** Use the provided commands as necessary to ensure the system is in a ready state (e.g., migrations, dependency installation).
+5. **Project integrity:** Any previous phase have been tested and human audited and approved. You must take care that your current implementation respects already implemented working business logic and code of the previous phases.
 
 ## Run Report (mandatory — write this before closing)
 
@@ -51,6 +52,7 @@ Phase: {N} | Iteration: {I} | {timestamp}
 3. Implement what the contracts require — exactly, nothing more.
 4. If `failed_specs.md` exists in your workspace (or you are informed of failures), fix those contracts first.
 5. Use your project commands via `abl-cmd` to verify your work. If a health check is available, you must pass it. Capture and read any command output to identify and resolve issues.
+6. Assume that shell tool calls will have interactive logic you cannot interact with, causing delays and loops. Use force flags or other options to ensure shell commands do not get stuck.
 
 ## Rules
 - Specs are law — implement exactly what they say.
