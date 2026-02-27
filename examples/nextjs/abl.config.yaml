@@ -3,20 +3,30 @@ directories:
   tests: ./tests
 
 models:
-  builder: gemini-2.5-pro
+  builder: gemini-2.5-flash
   verifier: gemini-2.5-flash
 
-commands:
-  health_check: npm run lint && npx tsc --noEmit
-  start_dev: npm run dev
-  reset_state: npm run db:seed
-  map_deps: cat package.json
+builder_commands:
+  health_check: 
+    command: "cd src && npm run lint && npx tsc --noEmit"
+    description: "Ensure zero lint errors and type safety"
 
-dev_server:
-  port: 3000
-  ready_endpoint: /api/health
-  timeout_ms: 15000
+verifier_commands:
+  seed: 
+    command: "cd src && npm run db:seed"
+    description: "Reset and seed the database to a known state"
+  
+  start_dev: 
+    command: "cd src && setsid npm run dev > ../.abl/logs/dev.log 2>&1 & echo $! > ../.abl/logs/dev.pid && sleep 5"
+    description: "Start Next.js in background and save PID"
+  
+  stop_dev: 
+    command: "kill $(cat .abl/logs/dev.pid) 2>/dev/null || true && rm -f .abl/logs/dev.pid"
+    description: "Gracefully terminate the dev server"
+  
+  db_query:
+    command: "psql $DATABASE_URL -t -A -f query.sql"
+    description: "Executes SQL in query.sql. Used to verify physical DB state."
 
 loop:
-  max_health_attempts: 10
   max_verifier_iterations: 5

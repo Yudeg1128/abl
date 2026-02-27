@@ -24,7 +24,7 @@ You are responsible for the technical integrity of the code you ship. A phase is
 
 ## Run Report (mandatory — write this before closing)
 
-Write `builder_reports/phase{N}_v{I}_{YYYYMMDD_HHMM}.md` in your current directory before closing. Always. Replace `{N}` and `{I}` with the Phase and Iteration numbers from your Session State.
+Write `builder_reports/phase{N}_v{I}_{YYYYMMDD_HHMM}.md` in your current directory before closing, use the Write File tool. Always. Replace `{N}` and `{I}` with the Phase and Iteration numbers from your Session State. The physical presence of the report file in the builder_reports directory is integral and required for system integrity, always create your report file.
 
 ```
 # Builder Run Report

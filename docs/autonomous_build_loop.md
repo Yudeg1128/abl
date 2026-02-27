@@ -1,76 +1,55 @@
 # Autonomous Build Loop (ABL)
-## Concept Formalization v0.8
+## Concept Formalization v0.9
 
 ---
 
 ## Problem Statement
 
-LLM-assisted development workflows that mirror human sprint team structures are inefficient because the orchestration burden falls on the human, role-playing generates fictional artifacts, and token usage is spent on organizational theater rather than intelligence. ABL eliminates all of this.
+LLM-assisted development workflows often suffer from high orchestration overhead for the human, fictional agent behavior (hallucinations), and inefficient token usage. ABL eliminates these by enforcing strict behavioral contracts and agent isolation.
 
 ---
 
 ## Core Concept
 
-A phase-based autonomous build loop where the human writes specs and performs final audit. Everything in between is automatic. The orchestration is handled by a Node.js CLI. The LLM engine is Gemini CLI.
-
----
-
-## Mental Model
+A phase-based autonomous build loop where the human provides specs and performs final audits. A Node.js CLI orchestrates two isolated AI roles—a **Builder** and a **Verifier**—to iteratively implement software.
 
 ```
-Specs → [abl phase N] → Verified output → Human audit → approve or refine specs → next phase
+Specs → [abl run] → Verified Output → Human Audit → Approve/Refine → Next Phase
 ```
-
-The human touches the system exactly twice per phase: spec input and audit output.
 
 ---
 
 ## Roles
 
-**Builder** — reads the dynamically injected phase and iteration, pulls the current phase spec from `specs/`, reads the codebase. Implements contracts exactly. If `failed_specs.md` exists, fixes those first. Manages its own technical quality using project-defined `abl-cmd` tools (lint, typecheck, migrations). Produces a Builder Run Report before finishing.
+**Builder** — Resides in the source directory (`src/`). Implements contracts exactly. It has full shell access to its workspace and uses `abl-cmd` (e.g., `health_check`) to verify code integrity (linting, type-checking) before finishing its turn.
 
-**Verifier** — reads the dynamically injected phase and iteration, pulls all cumulative specs from `specs/`, tests the live running system. Prepares the test environment using project-defined `abl-cmd` tools (seeding, starting server). Reports failures via `failed_specs.md`. Never reads source code. Produces a Verifier Run Report before finishing.
-
-There is no Rectifier. The Builder is the only entity that touches code.
+**Verifier** — Resides in the tests directory (`tests/`). Jailed from the source code. It writes and executes test scripts against the live system. It uses `abl-cmd` (e.g., `seed`, `start_dev`) as a capability bridge to manipulate the application state and start servers without internal code access.
 
 ---
 
-## Information Boundaries
+## The `abl-cmd` Proxy Mechanism
 
-| Role | Reads | Never reads |
-|---|---|---|
-| Builder | specs/ + SRC_DIR codebase + failed_specs.md | TESTS_DIR, prompts/verifier.md |
-| Verifier | specs/ + TESTS_DIR + failed_specs.md | SRC_DIR |
+Agents do not execute raw project commands. Instead, ABL generates a temporary binary called `abl-cmd` and injects it into the agent's `PATH`.
+- **Capability Bridge:** Allows the jailed Verifier to execute specific scripts (database resets, server management) defined in `abl.config.yaml`.
+- **Enforcement:** Forces the Builder to pass deterministic health checks before completing a turn.
+- **Spec Access:** Provides `abl-cmd get-spec <N>` to allow agents to retrieve current and historical contracts.
 
-Boundaries are enforced by **Docker**. Each role runs in an isolated container. `specs/` is mounted read-only for both roles.
+---
+
+## Interactive Mode (`-i` / `--interactive`)
+
+The `-i` flag allows a human to monitor or debug an agent's turn in real-time.
+- **Standard I/O:** Inherits the system shell (`stdio: inherit`).
+- **Token Tracking:** Usage is NOT logged in interactive mode.
+- **Session Control:** The human must manually type `/quit` to end the turn. ABL interprets any exit from interactive mode as a successful turn completion.
 
 ---
 
 ## Communication Channel: Builder ↔ Verifier
 
-The Verifier passes failures to the Builder via `TESTS_DIR/failed_specs.md`. Each entry contains the failed contract, the exact input used, and the observed system behavior. Written entirely in spec language — no test code, no test output, no implementation details.
-
-Format:
-
-```
-SPEC: POST /auth/login {valid credentials} → 200 {token}
-INPUT: {"email": "test@test.com", "password": "correct"}
-OBSERVED: 404
-
-SPEC: GET /dashboard (valid token) → 200
-INPUT: GET /dashboard headers: {Authorization: Bearer <token>}
-OBSERVED: redirect /login
-```
-
-INPUT is mandatory — the Builder must know exactly what stimulus triggered the failure.
-
-**Pass/fail signal:** The presence of `failed_specs.md` containing at least one `SPEC:` entry means failure. Absence or empty file means pass.
-
----
-
-## Git Strategy
-
-Two separate git repositories — one in SRC_DIR, one in TESTS_DIR. The Docker boundary extends into version control. Neither role can traverse the other's git history.
+The Verifier communicates failures via `tests/failed_specs.md`.
+- **Pass/Fail:** The presence of `failed_specs.md` with `SPEC:` entries triggers a new iteration.
+- **Input Requirement:** Every entry must include the exact `INPUT` (payload/request) that triggered the `OBSERVED` failure.
 
 ---
 
@@ -78,28 +57,22 @@ Two separate git repositories — one in SRC_DIR, one in TESTS_DIR. The Docker b
 
 ```
 project/
-├── [SRC_DIR]/                # configurable — default "src"
+├── [src]/                    # Builder workspace
 │   ├── .git/
-│   ├── [all application code]
-│   └── builder_reports/      # Builder's iteration reports
+│   └── builder_reports/      # Builder's logs
 ├── .abl/
-│   ├── tests/                # Verifier's workspace (configurable)
-│   │   ├── .git/
-│   │   ├── failed_specs.md   # Written by Verifier on failure, deleted on pass
-│   │   └── verifier_reports/ # Verifier's iteration reports
-│   ├── specs/
-│   │   ├── phase1.md
-│   │   └── phaseN.md
-│   ├── logs/                 # Runtime artifacts
-│   │   ├── builder.log       # Full Gemini CLI JSON output from Builder (last run)
-│   │   ├── verifier.log      # Full Gemini CLI JSON output from Verifier (last run)
-│   │   └── tokens.csv        # Cumulative token usage across all phases
-│   ├── project.md            # Human-written project description
-│   └── project_map.txt       # Auto-generated before every LLM call
-├── .env                      # Secrets — gitignored, never passed to LLMs
-└── prompts/
-    ├── builder.md
-    └── verifier.md
+│   ├── abl.config.yaml       # Configuration
+│   ├── project.md            # High-level project context
+│   ├── state.json            # Progress tracker
+│   ├── specs/                # Phase contracts (phase1.md, etc.)
+│   ├── prompts/              # System prompts (builder.md, verifier.md)
+│   ├── logs/                 # dev.log, dev.pid, tokens.csv
+│   └── lean_settings.json    # Gemini CLI settings
+├── [tests]/                  # Verifier workspace
+│   ├── .git/
+│   ├── failed_specs.md       # Bridge file
+│   └── verifier_reports/     # Verifier's logs
+└── .env                      # GEMINI_API_KEY
 ```
 
 ---
@@ -107,80 +80,46 @@ project/
 ## The Loop
 
 ```
-abl phase PHASE=N:
-    - Initialize SRC_DIR/.git and TESTS_DIR/.git if not present
-    - Initialize .abl/logs/tokens.csv
-    - Inject <<PHASE>> and <<ITERATION>> into prompts
+abl run:
+    - Sync state with Git history
+    - Identify current Phase N / Iteration I
 
-outer loop (max 5 Verifier iterations):
+outer loop (max iterations defined in config):
 
-    Builder runs in Docker (SRC_DIR + specs/)
-    Builder implements specs
-    Builder runs self-checks via abl-cmd
-    Builder writes report to src/builder_reports/
-    git commit SRC_DIR: "phaseN/build/step-X"
+    Builder (src/ + specs/):
+    - Reads specs and previous failed_specs.md
+    - Implements logic
+    - Runs abl-cmd health_check
+    - Commits code
 
-    Verifier runs in Docker (tests/ + specs/)
-    Verifier prepares environment via abl-cmd
-    Verifier writes and runs tests
-    Verifier writes report to tests/verifier_reports/
-    → failed_specs.md absent or empty: ✓ PASS — surface to human
-    → failed_specs.md has SPEC entries: FAIL
-      git commit TESTS_DIR: "phaseN/verify/step-X"
-      next outer iteration
+    Verifier (tests/ + specs/):
+    - Prepares environment via abl-cmd (seed/start_dev)
+    - Writes and runs adversarial tests
+    - Updates failed_specs.md
+    - Commits test results
 
-outer loop exhausted (5 Verifier fails): STUCK (contracts) → surface failed_specs.md
+    Decision:
+    - failed_specs.md empty? -> SUCCESS (Phase Complete)
+    - failed_specs.md has entries? -> Next Iteration
 ```
-
----
-
-## Continuous Phases
-
-`abl phase N` is idempotent and resumable. The loop always picks up from where it left off based on the internal `state.json`.
 
 ---
 
 ## Token Tracking
 
-Every Gemini call appends a row to `.abl/logs/tokens.csv`. View cumulative totals:
-```bash
-abl costs
-```
+Every non-interactive Gemini call is parsed for token usage and appended to `.abl/logs/tokens.csv`. Usage can be viewed via `abl costs`.
 
 ---
 
-## Spec and Phase Requirements
+## Spec Requirements
 
-### What a Spec Is
-
-A spec is a behavioral contract. It defines a specific action and a specific expected result with no room for interpretation. The Verifier must be able to derive a test from it without any implementation knowledge.
-
-### Spec Format
-
-**Context** — natural language intent, architecture decisions, constraints.
-
-**Contracts** — exact quasi-code action → result pairs. One action, one result, no ambiguity.
-
-```
-ACTION → EXPECTED RESULT
-```
-
-### Spec Rules
-
-- First line must be `# Phase N: Title`
-- Specs are append-only across phases
-- Cumulative: the Verifier tests ALL phases every iteration, not just the current one
-
----
-
-## Environment and Security
-
-**Docker** is the enforcement layer. Builder sees only SRC_DIR and specs/. Verifier sees only TESTS_DIR and specs/.
-
-**Secrets** live in `.env` at project root, gitignored. The runner reads `GEMINI_API_KEY` from `.env` and passes it as an environment variable to the container.
+- **Format:** `ACTION -> EXPECTED RESULT`
+- **Rule:** Specs must be non-interpretable behavioral contracts.
+- **Cumulative:** The Verifier is expected to test all previous phases to prevent regressions.
 
 ---
 
 ## Human Audit
 
-The human audits the phase output as a complete experience. Problems are addressed by refining specs — never by patching code directly. All corrections become permanent spec knowledge.
+The human performs the final sign-off. If the implementation is insufficient, the human refines the specs and restarts the loop. Patches are never applied directly to code; they are applied to the "law" (the specs).
+```

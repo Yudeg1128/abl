@@ -1,0 +1,32 @@
+directories:
+  src: ./src
+  tests: ./tests
+
+models:
+  builder: gemini-2.0-flash
+  verifier: gemini-2.0-flash
+
+builder_commands:
+  health_check: 
+    command: "cd src && ruff check . && mypy ."
+    description: "Run ruff for linting and mypy for static type checking"
+
+verifier_commands:
+  seed: 
+    command: "cd src && python3 -m app.database.seed"
+    description: "Reset the database and run the Python seed script"
+  
+  start_dev: 
+    command: "cd src && setsid uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../.abl/logs/dev.log 2>&1 & echo $! > ../.abl/logs/dev.pid && sleep 3"
+    description: "Start Uvicorn server in the background and save its PID"
+  
+  stop_dev: 
+    command: "kill $(cat .abl/logs/dev.pid) 2>/dev/null || true && rm -f .abl/logs/dev.pid"
+    description: "Gracefully terminate the Uvicorn process"
+  
+  db_query:
+    command: "psql $DATABASE_URL -t -A -f query.sql"
+    description: "Runs raw SQL from query.sql to verify physical database rows"
+
+loop:
+  max_verifier_iterations: 5

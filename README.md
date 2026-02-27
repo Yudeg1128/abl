@@ -1,137 +1,38 @@
 # ABL — Autonomous Build Loop
 
-ABL is a phase-based autonomous development framework. It orchestrates two isolated AI roles—a **Builder** and a **Verifier**—to implement software iteratively based on strict behavioral contracts.
+ABL is an advanced, phase-based AI development framework. It orchestrates two strictly isolated AI agents—a **Builder** and a **Verifier**—to implement software iteratively based on ruthless behavioral contracts. 
+
+ABL is not a toy coding assistant. It is a rigid, discipline-enforcing state machine designed to build real software.
+
+## Why ABL?
+
+1. **Semi-Production Grade by Default:** ABL produces reproducible, version-controlled, fully debuggable, and documented software. The framework assumes zero trust. The Builder writes the code; the Verifier attempts to break it via black-box testing. The loop only advances when the code mathematically passes the specs.
+2. **Enforced Spec Discipline:** ABL cures "vague prompt" syndrome. It demands professional, non-interpretable product specs (Contracts). If your idea is un-testable, ABL will not build it. This extreme discipline prevents wasted time, token churn, and spaghetti code. 
+3. **Extreme Token Efficiency:** ABL's architecture is so token-efficient that you can build complex, production-grade applications entirely on **Free Tier** LLM APIs. No other framework allows this level of autonomous loops without massive API bills.
+4. **Lightweight & Agnostic:** ABL is purely an orchestration layer. It is unopinionated about your tech stack, cross-platform, free to use (MIT), and easily extensible. You bring the stack; ABL brings the discipline.
 
 ## How it Works
 
-1.  **Human Writes Specs**: You define a phase as a list of behavioral "contracts" (Action → Result).
-2.  **Builder Implements**: The Builder reads the spec and writes the code.
-3.  **Verifier Tests**: The Verifier attempts to break the implementation by testing it against the contracts.
-4.  **Looping**: If the Verifier finds a failure, it writes a `failed_specs.md` file. The Builder receives this file and tries again.
-5.  **Audit**: Once all contracts pass, the loop finishes, and you audit the result.
+1. **Spec:** You define a phase as a list of strict contracts (`ACTION -> EXPECTED RESULT`).
+2. **Build:** The Builder reads the spec and modifies the `src/` directory.
+3. **Verify:** The Verifier reads the spec, spins up your app, and ruthlessly attacks it from the `tests/` directory.
+4. **Loop:** Failures are passed back to the Builder. The loop repeats until all contracts pass. 
+5. **Audit:** You perform a human audit, sign off, and write the next phase.
 
-## Prerequisites
+## Getting Started: The AI Copilot Method
 
--   **Node.js**: >= 18.0.0
--   **Gemini CLI**: `npm install -g @google/generative-ai-cli`
--   **API Key**: A valid `GEMINI_API_KEY` in your project's `.env` file.
--   **Git**: Required for the internal state tracking and versioning.
+**Do not attempt to set up ABL manually.** ABL requires syntactically perfect bash pipelines and mathematically strict Markdown contracts. 
 
-## Installation
+To start your project, use a frontier LLM (e.g., ChatGPT-5.2, Claude 4.6 Sonnet, or Gemini 3.1 Pro as of Feb 2026) as your Project Manager:
 
-```bash
-npm install -g abl
-```
+1. Open the `LLM_GUIDE.md` file in this repository.
+2. Copy its **entire contents**.
+3. Paste it into your favorite conversational AI.
+4. Follow the AI's exact instructions. It will guide you through installation, configuration, spec engineering, and human auditing.
 
-## Quick Start
+## License
 
-1.  **Initialize**:
-    ```bash
-    mkdir my-project && cd my-project
-    abl init
-    ```
-2.  **Define Project**: Edit `.abl/project.md` to describe the tech stack and goals.
-3.  **Write Phase 1**: Edit `.abl/specs/phase1.md` with your first contracts.
-4.  **Run**:
-    ```bash
-    abl run
-    ```
+MIT License. Free to use, modify, and distribute.
 
----
-
-## Writing High-Quality Specs
-
-Specs are behavioral contracts. They must be **non-interpretable**. If a human tester wouldn't know exactly what to do, the AI won't either.
-
-### The Contract Format
-A contract consists of a stimulus and an expected response.
-
-**Bad Spec (Vague):**
-> "The login page should work and show an error if the password is wrong."
-
-**Good Spec (Contract):**
-> `POST /api/login {"email": "user@test.com", "pass": "wrong"} → 401 Unauthorized`
-
-### Spec Rules
-1.  **Actionable**: Every contract must be testable via a command or script.
-2.  **Atomic**: One action, one result.
-3.  **Cumulative**: The Verifier tests all previous phases in every run to prevent regressions.
-
----
-
-## Configuration (`abl.config.yaml`)
-
-This file defines the workspace and how the agents interact with your environment.
-
-```yaml
-directories:
-  src: ./src        # Where the Builder works
-  tests: ./tests    # Where the Verifier works
-
-models:
-  builder: gemini-2.0-pro
-  verifier: gemini-2.0-flash
-
-builder_commands:
-  health_check: 
-    command: "npm run lint && npx tsc --noEmit"
-    description: "Check for lint and type errors"
-
-verifier_commands:
-  seed: 
-    command: "npm run db:seed"
-    description: "Reset and seed the database"
-  start_dev: 
-    command: "npm run dev &"
-    description: "Start the server in background"
-  stop_dev:
-    command: "pkill -f next-server"
-    description: "Kill the dev server"
-```
-
-### `abl-cmd`
-Agents do not see your raw shell commands. They see the names (e.g., `health_check`) and descriptions. They execute them using `abl-cmd <name>`.
-
----
-
-## Command Reference
-
--   **`abl init`**: Sets up the `.abl` directory, role prompts, and initializes git in your `src` and `tests` folders.
--   **`abl run`**: Resumes the current phase or starts the next pending phase.
--   **`abl phase <N>`**: Forces the execution of a specific phase.
--   **`abl costs`**: Summarizes token usage and costs from `.abl/logs/tokens.csv`.
-
----
-
-## Recommended Practices
-
-### What to use ABL for:
--   **API Backends**: Perfectly suited for request/response contracts.
--   **CLI Tools**: Easy to define input/output expectations.
--   **Logic Modules**: Great for data processing or complex algorithms.
-
-### What NOT to use ABL for:
--   **UI Polish**: "Make the button look nice" is not a contract.
--   **Exploratory Coding**: If you don't know the architecture yet, ABL will struggle.
--   **Large Refactors**: ABL is phase-based; large architectural shifts should be defined in a new phase's context.
-
-### Tips for Success:
--   **Use Health Checks**: Always provide the Builder with a `health_check` command (linting/typechecking).
--   **Isolated Iterations**: The Verifier should always run a `seed` or `reset` command before testing to ensure a clean state.
--   **Granular Phases**: Keep phases small (5-10 contracts). Large phases increase the chance of the Builder getting stuck in a "fix one, break another" loop.
-
-## Project Structure
-
-```text
-.
-├── .abl/
-│   ├── abl.config.yaml   # Configuration
-│   ├── project.md        # High-level project context
-│   ├── state.json        # Current progress tracking
-│   ├── specs/            # Phase definitions (phase1.md, etc)
-│   ├── prompts/          # System prompts for roles (do not edit unless advanced)
-│   └── logs/             # Role logs and token usage
-├── src/                  # Builder's workspace (App code)
-├── tests/                # Verifier's workspace (Test scripts/logs)
-└── .env                  # GEMINI_API_KEY
-```
+⚠️ **DISCLAIMER: USE AT YOUR OWN RISK**
+ABL is an autonomous system that executes AI-generated code and shell commands directly on your machine. **Always** run ABL inside a version-controlled repository (Git) and ensure your working directory is clean and committed before starting a phase. The maintainers are not responsible for any data loss, corrupted files, or unexpected system mutations caused by the AI agents.
