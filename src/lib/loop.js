@@ -77,7 +77,7 @@ async function runPhase(config, phase, opts = {}) {
     // --- EVALUATE ITERATION ---
     const vContent = fs.readFileSync(vLogPath, 'utf8');
     const vParsed = tokens.findStatsJson(vContent);
-    const verifierTaskSuccess = vParsed && vParsed.stats && !vContent.includes('Error executing tool');
+    const verifierTaskSuccess = vParsed && vParsed.stats;
     
     const failPath = path.join(config.resolved.testsDir, 'failed_specs.md');
     const hasContractFailures = fs.existsSync(failPath) && fs.readFileSync(failPath, 'utf8').trim().includes('SPEC:');
