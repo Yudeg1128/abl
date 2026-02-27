@@ -21,7 +21,7 @@ Specs → [abl run] → Verified Output → Human Audit → Approve/Refine → N
 
 ## Roles
 
-**Builder** — Resides in the source directory (`src/`). Implements contracts exactly. It has full shell access to its workspace and uses `abl-cmd` (e.g., `health_check`) to verify code integrity (linting, type-checking) before finishing its turn.
+**Builder** — Resides in the source directory (`src/`). Implements contracts exactly. It has full shell access to its workspace. If the user defines a `health_check` command in the config, the Builder is prompt-mandated to run it and self-correct any errors before concluding its turn. If omitted, it relies on its own internal zero-tolerance coding standards.
 
 **Verifier** — Resides in the tests directory (`tests/`). Jailed from the source code. It writes and executes test scripts against the live system. It uses `abl-cmd` (e.g., `seed`, `start_dev`) as a capability bridge to manipulate the application state and start servers without internal code access.
 
@@ -31,7 +31,7 @@ Specs → [abl run] → Verified Output → Human Audit → Approve/Refine → N
 
 Agents do not execute raw project commands. Instead, ABL generates a temporary binary called `abl-cmd` and injects it into the agent's `PATH`.
 - **Capability Bridge:** Allows the jailed Verifier to execute specific scripts (database resets, server management) defined in `abl.config.yaml`.
-- **Enforcement:** Forces the Builder to pass deterministic health checks before completing a turn.
+- **Agentic Self-Policing (Not a Hard Gate):** ABL's Node.js orchestrator does *not* programmatically block the Builder. Instead, if a user provides a `health_check` via `abl-cmd`, the system prompt strictly forces the Builder to use this tool to verify its own work. This allows humans to enforce "Bring Your Own Standard" (e.g., strict ESLint or Ruff rules) via agent autonomy.
 - **Spec Access:** Provides `abl-cmd get-spec <N>` to allow agents to retrieve current and historical contracts.
 
 ---
@@ -89,7 +89,7 @@ outer loop (max iterations defined in config):
     Builder (src/ + specs/):
     - Reads specs and previous failed_specs.md
     - Implements logic
-    - Runs abl-cmd health_check
+    - Agentically executes `abl-cmd health_check` (if defined by user) and self-corrects until clean
     - Commits code
 
     Verifier (tests/ + specs/):

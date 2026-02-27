@@ -10,8 +10,8 @@
 * **Agnosticism:** ABL works with ANY tech stack (Next.js, Django, Go, etc.). You must adapt configurations to the user's chosen stack.
 * **Isolation:** ABL isolates two AI agents. The **Builder** works in `src/`. The **Verifier** is strictly jailed in `tests/`. State is tracked via `.abl/state.json` and synchronized with Git commits.
 * **The `abl-cmd` Proxy:** `abl.config.yaml` defines commands that generate a temporary binary (`abl-cmd`) injected into the agent's PATH.
-    * *Builder Commands:* (e.g., `health_check`) are for **behavior enforcement**. The Builder has shell access to `src/`; these commands force it to prove code quality (lint/typecheck) before its turn ends.
-    * *Verifier Commands:* (e.g., `seed`, `start_dev`, `db_query`) are for **capability bridging**. The Verifier is jailed in `tests/` and CANNOT access `src/` or the DB directly. You must write robust bash pipelines here to give the Verifier black-box access to manipulate state and run the app.
+   * *Builder Commands:* (e.g., `health_check`) are OPTIONAL but highly recommended tools for **Bring-Your-Own-Standard enforcement**. The Builder has native shell access to `src/`, but providing a health check command forces the Builder to verify its code against the user's specific rules (like strict ESLint or Mypy) before it decides its turn is complete.
+   * *Verifier Commands:* (e.g., `seed`, `start_dev`, `db_query`) are for **capability bridging**. The Verifier is strictly jailed in `tests/` and CANNOT access `src/`, read environment variables, or magically connect to a database. You MUST design robust bash pipelines here to give the Verifier selective, black-box access. Think of these commands as punching precise, controlled holes through the Verifier's jail so it can test the app.
 
 ---
 
@@ -33,8 +33,11 @@
 
 ### Step 3: Configuration (`abl.config.yaml`)
 1. Generate a stack-specific YAML configuration.
-2. You MUST include `builder_commands` (e.g., `health_check: npm run lint`) and `verifier_commands` (e.g., `seed`, `start_dev`, `stop_dev`).
-3. **Bash Strictness:** `verifier_commands` are executed blindly by an AI. Backgrounding servers MUST use tools like `setsid`, pipe logs, and save PIDs (e.g., `setsid npm run dev > ../.abl/logs/dev.log 2>&1 & echo $! > ../.abl/logs/dev.pid`). Teardown must aggressively `kill` that PID. If querying a DB, provide exact escaping patterns (e.g., `psql`).
+2. You MUST design comprehensive `verifier_commands` tailored exactly to the user's specific project architecture. Do not just use generic placeholders; you must explicitly grant the Verifier the exact capabilities it needs to do its job. Interview the user to determine:
+   * **Live Server Management:** (e.g., `start_dev`, `stop_dev`) Almost universally required. How is the app started? The Verifier needs a backgrounded server to run HTTP/integration tests against.
+   * **State Reset/Seeding:** (e.g., `seed`, `db_reset`) Required for stateful apps. How does the database get wiped and seeded? The Verifier must run this to ensure a clean, idempotent state before destructive tests.
+   * **Physical State Verification:** (e.g., `db_query`) Highly recommended for "Anti-Fabrication." The Verifier must not blindly trust a `200 OK` API response. It needs a command (e.g., wrapping `psql`, `mongosh`, or `sqlite3`) to directly query the database and prove the Builder actually wrote the data.
+3. You SHOULD include `builder_commands` (e.g., `health_check: npm run lint`) to enforce the user's specific quality standards, explaining to the user that this makes the Builder self-police its code quality.3. **Bash Strictness:** `verifier_commands` are executed blindly by an AI. Backgrounding servers MUST use tools like `setsid`, pipe logs, and save PIDs (e.g., `setsid npm run dev > ../.abl/logs/dev.log 2>&1 & echo $! > ../.abl/logs/dev.pid`). Teardown must aggressively `kill` that PID. If querying a DB, provide exact escaping patterns (e.g., `psql`).
 
 ### Step 4: Spec Engineering (`phase1.md`)
 1. Elicit the first functional feature from the user.
